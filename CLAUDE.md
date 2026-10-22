@@ -7,7 +7,8 @@ Ferramenta para **realocar, criar e renomear Technical Accounts (TA)** no STAR I
 - `usp_IPS_MoveTA.sql` – procs `usp_IPS_MoveTA`, `usp_IPS_RetireTA`, `usp_IPS_CreateTA`, `usp_IPS_RenameTA`. Todas participam da transação do chamador.
 - `testdata_ADEF_MOVETA.sql` – árvore de teste 7/701 e 8/801 com jobs, WH, WPWHERE2, WHWHERE2.
 - `build/Build-Exe.ps1` + `build/MoveTA.Launcher.cs` – geram `dist/MoveTA.exe` (exe portátil com ps1 e sql embutidos, compilado com o csc.exe do .NET 4.x).
-- `build/build-exe-linux.sh` – gera o mesmo `dist/MoveTA.exe` na nuvem com o `mcs` do Mono (`apt-get install -y mono-mcs libmono-system-windows-forms4.0-cil`; `pip install pefile` só se faltar `build/MoveTA.ico`, que é tirado do exe anterior).
+- `Gerar-Exe.cmd` – dois cliques no Windows rodam `build/Build-Exe.ps1` e geram `dist/MoveTA.exe`.
+- **Não compilar o exe com Mono na nuvem:** o exe gerado com `mcs` (testado na 2.3) não abre no PC do usuário, sem nenhum erro. Só o build com o csc.exe do Windows funciona.
 - `versions/` – v1.0 (WinForms) e v2.0. `docs/screenshots/` – prints.
 - `README.md` – manual completo em PT, com histórico das versões.
 
@@ -32,17 +33,17 @@ Ferramenta para **realocar, criar e renomear Technical Accounts (TA)** no STAR I
 - Ao mudar qualquer procedure, subir a marca `-- MoveTA-Procs-Version: X.Y` dentro de **cada uma das 4 procs**. O app compara essa marca com o arquivo embutido e atualiza as procs sozinho (ao conectar e antes de simular/executar).
 - O app pode remover as procs do banco do cliente: botão na tela de conexão ou opção "ao fechar" (`dropProcsOnClose` no settings.json).
 
-- **Sempre entregar o EXECUTÁVEL para download** ao fim de cada mudança: rodar `build/build-exe-linux.sh` (na nuvem) para gerar `dist/MoveTA.exe` com o ps1 e o sql atuais, commitar o exe e enviar `dist/MoveTA.exe` ao usuário como anexo. O usuário usa o exe, não o script.
+- **Sempre entregar o app para gerar o executável** ao fim de cada mudança: zip `MoveTA_<versão>.zip` com a pasta `MoveTA_<versão>/` contendo `Move-TA.ps1`, `usp_IPS_MoveTA.sql`, `Move-TA.cmd`, `Gerar-Exe.cmd`, `README.md`, `build/Build-Exe.ps1` e `build/MoveTA.Launcher.cs`, enviado como anexo. O usuário roda `Gerar-Exe.cmd` e usa o `dist\MoveTA.exe` gerado. O usuário usa o exe, não o script.
 
 ## Armadilhas (importante)
 - `Move-TA.ps1` precisa ser salvo em **UTF-8 com BOM** (PowerShell 5.1).
 - `usp_IPS_MoveTA.sql` deve ser **só ASCII** (sem acentos): sqlcmd e o app leem sem BOM.
 - PowerShell: `$(if ...)` desmonta coleções – usar if/else normal; scriptblocks de eventos WPF só enxergam variáveis `$script:`.
 - sqlcmd precisa de `-I` (QUOTED_IDENTIFIER, índices filtrados) e `-C` (certificado).
-- Ao mudar o app: atualizar `$script:Version`, a versão no `MoveTA.Launcher.cs` (const + atributos) e o README; depois gerar o exe (`build/build-exe-linux.sh` na nuvem ou `build/Build-Exe.ps1` no Windows).
+- Ao mudar o app: atualizar `$script:Version`, a versão no `MoveTA.Launcher.cs` (const + atributos) e o README; depois gerar o exe no Windows com `Gerar-Exe.cmd`.
 
 ## Limites da sessão na nuvem
-- A nuvem é Linux: **não roda WPF, PowerShell 5.1 nem SQL Server do IPS**. Dá para editar código, SQL e README, revisar, abrir PRs e **gerar o exe** com `build/build-exe-linux.sh`.
+- A nuvem é Linux: **não roda WPF, PowerShell 5.1 nem SQL Server do IPS**. Dá para editar código, SQL e README, revisar e abrir PRs. **O exe não sai daqui**: é gerado no Windows com `Gerar-Exe.cmd`.
 - Testes de verdade e o build do `MoveTA.exe` são feitos no PC do Flávio (localhost\SQL2025, banco sandbox `ADEF_MOVETA`, planta FMHUB) com `Move-TA.ps1 -UiTest` e simulação.
 - Para validar sintaxe na nuvem dá para usar `pwsh` (PowerShell 7), sabendo que WPF não carrega.
 
