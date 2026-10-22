@@ -1,0 +1,4 @@
+﻿Move TA v1.0 - 2026-10-21 22:23
+Interface WinForms classica (arvore com checkboxes + grade de mapeamento).
+Procedures: usp_IPS_MoveTA / usp_IPS_RetireTA (ST_PlantFunctionObject, ST_WPWHERE2, ST_WHWHERE2, ST_WorkHistory, ST_POAITEM2, materiais, orcamento).
+Testado: ADEF (rollback) e ADEF_MOVETA (COMMIT).
