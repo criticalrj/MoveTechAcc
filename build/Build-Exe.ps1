@@ -1,7 +1,7 @@
 <#
-  Gera dist\MoveTA.exe (arquivo único, portátil) a partir de Move-TA.ps1 + usp_IPS_MoveTA.sql.
-  Usa só o que já vem no Windows: csc.exe do .NET Framework 4.x e WPF para desenhar o ícone.
-  Rodar:  powershell -NoProfile -ExecutionPolicy Bypass -STA -File build\Build-Exe.ps1
+  Builds dist\MoveTA.exe (single portable file) from Move-TA.ps1 + usp_IPS_MoveTA.sql.
+  Uses only what ships with Windows: csc.exe from .NET Framework 4.x and WPF to draw the icon.
+  Run:    powershell -NoProfile -ExecutionPolicy Bypass -STA -File build\Build-Exe.ps1
 #>
 $ErrorActionPreference = 'Stop'
 $build = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -9,7 +9,7 @@ $root  = Split-Path -Parent $build
 $dist  = Join-Path $root 'dist'
 New-Item -ItemType Directory -Force $dist | Out-Null
 
-# ---------------- ícone (PNG dentro de ICO, 256/48/32/16)
+# ---------------- icon (PNG inside ICO, 256/48/32/16)
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 function New-IconPng([int]$Size) {
     $dv = New-Object System.Windows.Media.DrawingVisual
@@ -28,7 +28,7 @@ function New-IconPng([int]$Size) {
         $enc.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($rtb))
         $fsP = [IO.File]::Create((Join-Path $build 'MoveTA_256.png')); $enc.Save($fsP); $fsP.Close()
     }
-    # BGRA sem pré-multiplicação, linhas de baixo para cima (formato DIB do ICO)
+    # BGRA without premultiplication, rows bottom-up (ICO DIB format)
     $conv = New-Object System.Windows.Media.Imaging.FormatConvertedBitmap($rtb, [System.Windows.Media.PixelFormats]::Bgra32, $null, 0)
     $stride = $Size * 4; $px = New-Object byte[] ($stride * $Size); $conv.CopyPixels($px, $stride, 0)
     $ms = New-Object IO.MemoryStream; $w = New-Object IO.BinaryWriter($ms)
@@ -53,7 +53,7 @@ for ($i = 0; $i -lt $sizes.Count; $i++) {
 foreach ($p in $imgs) { $bw.Write([byte[]]$p) }
 $bw.Close()
 
-# ---------------- compilar
+# ---------------- compile
 $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path $csc)) { $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe' }
 $out = Join-Path $dist 'MoveTA.exe'

@@ -1,9 +1,9 @@
-// Move TA - launcher portatil (arquivo unico).
-// Leva Move-TA.ps1 e usp_IPS_MoveTA.sql como recursos embutidos, extrai para %TEMP%\MoveTA_<versao>
-// e abre o app com o PowerShell 5.1 do Windows (sem console). Logs ficam na pasta "logs" ao lado do .exe.
-// Uso:  MoveTA.exe                -> abre o app
-//       MoveTA.exe /debug         -> abre com console visivel (para ver erros)
-//       MoveTA.exe -Lang en ...   -> demais parametros vao direto para o Move-TA.ps1
+// Move TA - portable launcher (single file).
+// Carries Move-TA.ps1 and usp_IPS_MoveTA.sql as embedded resources, extracts them to %TEMP%\MoveTA_<version>
+// and opens the app with the Windows PowerShell 5.1 (no console). Logs go to the "logs" folder next to the .exe.
+// Usage: MoveTA.exe                -> opens the app
+//        MoveTA.exe /debug         -> opens with a visible console (to see errors)
+//        MoveTA.exe -Lang en ...   -> other parameters go straight to Move-TA.ps1
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -14,15 +14,15 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Move TA")]
 [assembly: AssemblyProduct("Move TA - STAR IPS 3.62 Technical Accounts")]
 [assembly: AssemblyDescription("Realocar, criar e renomear Technical Accounts no STAR IPS 3.62")]
-[assembly: AssemblyVersion("2.2.0.0")]
-[assembly: AssemblyFileVersion("2.2.0.0")]
-[assembly: AssemblyInformationalVersion("2.2")]
+[assembly: AssemblyVersion("2.3.0.0")]
+[assembly: AssemblyFileVersion("2.3.0.0")]
+[assembly: AssemblyInformationalVersion("2.3")]
 [assembly: AssemblyCompany("Flávio Miguel")]
 [assembly: AssemblyCopyright("© 2026 Flávio Miguel")]
 
 static class Program
 {
-    const string Version = "2.2";
+    const string Version = "2.3";
 
     [STAThread]
     static int Main(string[] args)
@@ -37,7 +37,7 @@ static class Program
 
             string logs = Path.Combine(exeDir, "logs");
             try { Directory.CreateDirectory(logs); }
-            catch { logs = Path.Combine(work, "logs"); }   // pendrive somente leitura: usa o TEMP
+            catch { logs = Path.Combine(work, "logs"); }   // read-only USB drive: use TEMP
 
             bool debug = false;
             var extra = new StringBuilder();
@@ -58,7 +58,7 @@ static class Program
             psi.WorkingDirectory = work;
             Process p = Process.Start(psi);
 
-            // se o app morrer logo no início, avisa (em vez de "não abriu nada")
+            // if the app dies right at start, tell the user (instead of "nothing opened")
             if (!debug && p.WaitForExit(6000) && p.ExitCode != 0)
             {
                 Fail("O Move TA fechou ao iniciar (código " + p.ExitCode + ").\n\n" +

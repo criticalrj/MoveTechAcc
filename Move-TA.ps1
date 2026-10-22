@@ -1,22 +1,24 @@
 ﻿<#
 .SYNOPSIS
-    Move TA v2.2 - realocação, criação, renomeação e renumeração de Technical Accounts no STAR IPS 3.62.x.
-    Move TA v2.2 - relocate, create, rename and renumber Technical Accounts in STAR IPS 3.62.x.
+    Move TA v2.3 - relocate, create, rename and renumber Technical Accounts in STAR IPS 3.62.x.
 
 .DESCRIPTION
-    Visual no padrão do FM Terminals (Fluent / novo Outlook). Português e inglês (botão PT/EN).
+    Look and feel of FM Terminals (Fluent / new Outlook). Portuguese and English (PT/EN button).
 
-    Tudo entra num PLANO antes de ir para o banco:
-      - Mover: arraste uma TA (com a estrutura abaixo dela) e solte sobre o novo pai, inclusive
-        sobre uma TA que ainda não foi salva (criada ou movida no próprio plano).
-      - Nova TA: botão direito numa TA (ou botão "Nova TA") cria uma TA dentro dela.
-      - Renomear: botão direito, botão "Renomear" ou F2.
-    Simular roda tudo numa transação com ROLLBACK; Executar grava tudo (COMMIT), na ordem:
-    pais antes dos filhos (criar/mover), depois renomear, depois desativar as origens vazias.
+    Everything goes into a PLAN before it reaches the database:
+      - Move: drag a TA (with the structure below it) and drop it on the new father, also
+        on a TA that is not saved yet (created or moved in the plan itself).
+      - New TA: right click on a TA (or the "New TA" button) creates a TA inside it.
+      - Rename: right click, the "Rename" button or F2. The code can change too (free code
+        inside the same father group).
+    Simulate runs everything in one transaction with ROLLBACK; Execute saves everything (COMMIT),
+    in this order: parents before children (create/move), then rename, then retire empty sources.
 
-    Procedures (usp_IPS_MoveTA.sql, instaladas pela tool se faltarem):
+    Procedures (usp_IPS_MoveTA.sql, installed by the tool when missing and updated when the
+    version marker "MoveTA-Procs-Version" differs from the bundled file):
     usp_IPS_MoveTA, usp_IPS_RetireTA, usp_IPS_CreateTA, usp_IPS_RenameTA.
-    Versões anteriores: versions\v1.0 (WinForms) e versions\Move-TA_v2.0_bilingue.ps1.
+    They can be removed from the customer database by hand or when the tool closes.
+    Older versions: versions\v1.0 (WinForms) and versions\Move-TA_v2.0_bilingue.ps1.
 #>
 [CmdletBinding()]
 param(
@@ -40,13 +42,13 @@ param(
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml
 Add-Type -AssemblyName System.Data
 
-$script:Version      = '2.2'
+$script:Version      = '2.3'
 $script:ScriptDir    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script:ProcFile     = Join-Path $script:ScriptDir 'usp_IPS_MoveTA.sql'
 $script:LogDir       = $(if ($LogDir) { $LogDir } else { Join-Path $script:ScriptDir 'logs' })
 $script:SettingsFile = Join-Path $env:APPDATA 'MoveTA\settings.json'
 
-# ============================================================================ idiomas / languages
+# ============================================================================ languages
 $script:Strings = @{
 pt = @{
     search_hint = 'Pesquisar TA por código ou nome e tecle Enter'
@@ -82,7 +84,8 @@ pt = @{
     hist_empty = 'Nenhum log ainda. Rode uma simulação na tela Realocar.'
     conn_title = 'Conexão'; conn_sub = 'Banco do STAR IPS 3.62 onde as TAs serão realocadas.'
     lbl_server = 'Servidor'; lbl_db = 'Banco'; lbl_auth = 'Autenticação'; auth_win = 'Windows'; auth_sql = 'SQL login'
-    lbl_user = 'Usuário'; lbl_pass = 'Senha'; btn_connect = 'Conectar'; btn_install = 'Reinstalar procedures'
+    lbl_user = 'Usuário'; lbl_pass = 'Senha'; btn_connect = 'Conectar'; btn_install = 'Reinstalar procedures'; btn_drop = 'Remover procedures'
+    chk_drop_close = 'Remover as procedures do banco ao fechar a tool'
     dlg_title = 'Mover estrutura'; dlg_from = 'DE'; dlg_to = 'PARA DENTRO DE'; dlg_how = 'Como aplicar os novos códigos?'
     rule_prefix = 'Trocar só o início do código'; rule_next = 'Usar o próximo código livre'; rule_custom = 'Escolher o código'
     btn_cancel = 'Cancelar'; btn_add = 'Adicionar ao plano'; btn_apply = 'Aplicar'
@@ -90,11 +93,11 @@ pt = @{
     dlg_sub = 'Planta {0} · a estrutura inteira vai junto ({1} TAs)'
     desc_next = '{0} → {1}, o primeiro número livre dentro de {2}'
     desc_next_na = 'Não dá para calcular um próximo número para esse formato de código.'
-    desc_custom = 'formato {0} · os subaccounts seguem'
+    desc_custom = 'código livre começando com {0}, por exemplo {1} · os subaccounts seguem'
     err_prefix_same = '{0} já é o grupo pai atual: trocar o início não muda nada. Use o próximo código livre ou escolha o código.'
     err_next = 'Não foi possível calcular o próximo código livre.'; err_empty = 'Digite o novo código.'
-    err_start = 'O código precisa começar com {0}, o grupo onde você soltou.'
-    err_format = 'Use o formato {0}: o mesmo tamanho de nível que {1}.'; err_sep = "Depois de {0} vem '{1}'."
+    err_start = 'O código precisa começar com {0}, o grupo onde você soltou, e ser mais longo.'
+    err_clash = '{0} parece subaccount de {1}. Escolha outro código.'
     err_equal = 'O código novo é igual ao atual.'; err_inside = 'A TA não pode ficar dentro dela mesma.'
     err_conflict = '{0} TA(s) em conflito: o destino já está saindo no plano ou fica fora do padrão de código.'
     prev = 'Prévia'; prev_hdr = 'Prévia · {0} TAs'
@@ -135,6 +138,10 @@ pt = @{
     conn_fail = 'Falha: {0}'; disconnected = 'Desconectado'; not_connected_t = 'Não conectou'
     plant_loaded_t = 'Planta {0} carregada'; plant_loaded = '{0} TAs na classe {1}. Arraste uma TA da esquerda e solte sobre o novo pai à direita.'
     plant_fail = 'Falha ao carregar a planta'; connect_first = 'Conecte primeiro.'; reinstalled = 'Procedures reinstaladas em {0}.'
+    dropped = 'Procedures removidas de {0}. Elas voltam a ser instaladas quando você simular ou conectar de novo.'
+    cf_drop_t = 'Remover as procedures?'; cf_drop = 'Remover'
+    drop_confirm = 'As 4 procedures da tool serão apagadas de {0}. Nenhum dado do IPS é alterado.'
+    conn_ok_upd = 'Conectado em {0} / {1} (IPS {2}). Procedures atualizadas da versão {3} para {4}.'; proc_old = 'anterior a 2.3'
     switch_plant = 'Trocar de planta descarta o plano atual.'
     close_confirm = 'Há itens no plano que não foram executados.'
     log_exported = 'Log exportado'; kind_exec = 'EXECUÇÃO'; kind_sim = 'SIMULAÇÃO'
@@ -165,14 +172,14 @@ pt = @{
     info_created_t = 'Nova TA no plano'; info_created = '{0} · {1} entra dentro de {2}. Você já pode soltar outras TAs nela.'
     info_renamed_t = 'Renomeação no plano'; info_renamed = '{0}: "{1}" → "{2}".'
     ed_code_lock_child = 'O código segue o topo da estrutura movida ({0}). Para mudar, edite {0}.'
-    ed_code_hint_ren = 'Pode mudar o código também: os subaccounts seguem. Formato {0}.'
-    ed_err_same_all = 'Nada mudou.'; ed_err_fmt = 'Use o formato {0}.'
+    ed_code_hint_ren = 'Pode mudar o código também: os subaccounts seguem. Código livre, começando com {0}.'
+    ed_err_same_all = 'Nada mudou.'
     ed_st_recode = 'Novo código: {0} → {1} · {2} TA(s) mudam junto.'
     st_recode = 'NOVO CÓDIGO'; rule_t_renumber = 'Renumerar'
     info_recoded_t = 'Código alterado no plano'; info_recoded = '{0} → {1}: {2} TA(s) seguem o novo código.'
     rail_about = 'Sobre'; ab_ver = 'Versão {0}'; ab_by = 'CRIADO POR'; ab_env = 'Ambiente'; ab_close = 'Fechar'
     ab_desc = 'Realoca, cria, renomeia e renumera Technical Accounts no STAR IPS 3.62, levando junto jobs, spares, counters, histórico e where-lists (ST_WPWHERE2 e ST_WHWHERE2). Tudo passa por um plano, com simulação antes de gravar.'
-    ab_conn = 'Conexão'; ab_ips = 'Versão do IPS'; ab_procs = 'Procedures'; ab_procs_v = '{0} de 4 instaladas'; ab_logs = 'Pasta de logs'; ab_ps = 'PowerShell / .NET'; ab_none = 'não conectado'
+    ab_conn = 'Conexão'; ab_ips = 'Versão do IPS'; ab_procs = 'Procedures'; ab_procs_v = '{0} de 4 instaladas · versão {1}'; ab_logs = 'Pasta de logs'; ab_ps = 'PowerShell / .NET'; ab_none = 'não conectado'
 }
 en = @{
     search_hint = 'Search a TA by code or name and press Enter'
@@ -208,7 +215,8 @@ en = @{
     hist_empty = 'No logs yet. Run a simulation on the Relocate screen.'
     conn_title = 'Connection'; conn_sub = 'STAR IPS 3.62 database where the TAs will be relocated.'
     lbl_server = 'Server'; lbl_db = 'Database'; lbl_auth = 'Authentication'; auth_win = 'Windows'; auth_sql = 'SQL login'
-    lbl_user = 'User'; lbl_pass = 'Password'; btn_connect = 'Connect'; btn_install = 'Reinstall procedures'
+    lbl_user = 'User'; lbl_pass = 'Password'; btn_connect = 'Connect'; btn_install = 'Reinstall procedures'; btn_drop = 'Remove procedures'
+    chk_drop_close = 'Remove the procedures from the database when the tool closes'
     dlg_title = 'Move structure'; dlg_from = 'FROM'; dlg_to = 'INTO'; dlg_how = 'How should the new codes be applied?'
     rule_prefix = 'Only change the start of the code'; rule_next = 'Use the next free code'; rule_custom = 'Choose the code'
     btn_cancel = 'Cancel'; btn_add = 'Add to plan'; btn_apply = 'Apply'
@@ -216,11 +224,11 @@ en = @{
     dlg_sub = 'Plant {0} · the whole structure moves along ({1} TAs)'
     desc_next = '{0} → {1}, the first free number under {2}'
     desc_next_na = 'A next number cannot be calculated for this code format.'
-    desc_custom = 'format {0} · subaccounts follow'
+    desc_custom = 'free code starting with {0}, for example {1} · subaccounts follow'
     err_prefix_same = '{0} is already the current parent: changing the start changes nothing. Use the next free code or choose the code.'
     err_next = 'Could not calculate the next free code.'; err_empty = 'Type the new code.'
-    err_start = 'The code must start with {0}, the group you dropped on.'
-    err_format = 'Use the format {0}: the same level length as {1}.'; err_sep = "After {0} comes '{1}'."
+    err_start = 'The code must start with {0}, the group you dropped on, and be longer.'
+    err_clash = '{0} looks like a subaccount of {1}. Choose another code.'
     err_equal = 'The new code is the same as the current one.'; err_inside = 'A TA cannot go inside itself.'
     err_conflict = '{0} TA(s) in conflict: the target is leaving in the plan or does not follow the code pattern.'
     prev = 'Preview'; prev_hdr = 'Preview · {0} TAs'
@@ -261,6 +269,10 @@ en = @{
     conn_fail = 'Failed: {0}'; disconnected = 'Disconnected'; not_connected_t = 'Not connected'
     plant_loaded_t = 'Plant {0} loaded'; plant_loaded = '{0} TAs in class {1}. Drag a TA from the left and drop it on the new parent on the right.'
     plant_fail = 'Failed to load the plant'; connect_first = 'Connect first.'; reinstalled = 'Procedures reinstalled in {0}.'
+    dropped = 'Procedures removed from {0}. They are installed again when you simulate or connect again.'
+    cf_drop_t = 'Remove the procedures?'; cf_drop = 'Remove'
+    drop_confirm = 'The 4 tool procedures will be dropped from {0}. No IPS data is changed.'
+    conn_ok_upd = 'Connected to {0} / {1} (IPS {2}). Procedures updated from version {3} to {4}.'; proc_old = 'before 2.3'
     switch_plant = 'Switching plants discards the current plan.'
     close_confirm = 'There are plan items that were not executed.'
     log_exported = 'Log exported'; kind_exec = 'EXECUTION'; kind_sim = 'SIMULATION'
@@ -291,14 +303,14 @@ en = @{
     info_created_t = 'New TA in plan'; info_created = '{0} · {1} goes inside {2}. You can already drop other TAs into it.'
     info_renamed_t = 'Rename in plan'; info_renamed = '{0}: "{1}" → "{2}".'
     ed_code_lock_child = 'The code follows the top of the moved structure ({0}). To change it, edit {0}.'
-    ed_code_hint_ren = 'You can change the code too: subaccounts follow. Format {0}.'
-    ed_err_same_all = 'Nothing changed.'; ed_err_fmt = 'Use the format {0}.'
+    ed_code_hint_ren = 'You can change the code too: subaccounts follow. Free code, starting with {0}.'
+    ed_err_same_all = 'Nothing changed.'
     ed_st_recode = 'New code: {0} → {1} · {2} TA(s) change along.'
     st_recode = 'NEW CODE'; rule_t_renumber = 'Renumber'
     info_recoded_t = 'Code changed in plan'; info_recoded = '{0} → {1}: {2} TA(s) follow the new code.'
     rail_about = 'About'; ab_ver = 'Version {0}'; ab_by = 'CREATED BY'; ab_env = 'Environment'; ab_close = 'Close'
     ab_desc = 'Relocates, creates, renames and renumbers Technical Accounts in STAR IPS 3.62, taking jobs, spares, counters, work history and where-lists (ST_WPWHERE2 and ST_WHWHERE2) along. Everything goes through a plan, simulated before it is saved.'
-    ab_conn = 'Connection'; ab_ips = 'IPS version'; ab_procs = 'Procedures'; ab_procs_v = '{0} of 4 installed'; ab_logs = 'Log folder'; ab_ps = 'PowerShell / .NET'; ab_none = 'not connected'
+    ab_conn = 'Connection'; ab_ips = 'IPS version'; ab_procs = 'Procedures'; ab_procs_v = '{0} of 4 installed · version {1}'; ab_logs = 'Log folder'; ab_ps = 'PowerShell / .NET'; ab_none = 'not connected'
 }
 }
 $script:LinkLabelsByLang = @{
@@ -322,7 +334,7 @@ function Save-Settings([hashtable]$Values) {
 function Save-Lang { Save-Settings @{ lang = $script:Lang } }
 $script:Saved = Get-Settings
 $script:Lang = $(if ($Lang) { $Lang } elseif ($script:Saved.lang -in 'pt','en') { [string]$script:Saved.lang } else { 'pt' })
-# sem parâmetro explícito, usa a última conexão que funcionou
+# without an explicit parameter, use the last connection that worked
 if (-not $PSBoundParameters.ContainsKey('Server') -and $script:Saved.server) { $Server = [string]$script:Saved.server }
 if (-not $PSBoundParameters.ContainsKey('Database') -and $script:Saved.database) { $Database = [string]$script:Saved.database }
 function T([string]$Key) {
@@ -332,7 +344,7 @@ function T([string]$Key) {
     $s
 }
 
-# ============================================================================ modelo (C#)
+# ============================================================================ model (C#)
 if (-not ('MoveTA.TaNode' -as [type])) {
 Add-Type -TypeDefinition @'
 using System;
@@ -380,7 +392,7 @@ namespace MoveTA {
 '@
 }
 
-# ============================================================================ estado
+# ============================================================================ state
 $script:Conn = $null; $script:ConnLabel = $null; $script:DbName = $null; $script:ConnStatusKey = $null; $script:ConnStatusArgs = @()
 $script:PlantId = $null; $script:FuncClass = $null
 $script:Base = @{}; $script:ClassSet = @{}; $script:DeletedSet = @{}; $script:Kids = @{}; $script:SortedCodes = @()
@@ -418,8 +430,30 @@ function Invoke-SqlScalar { param([string]$Sql, [hashtable]$Params = @{})
     foreach ($k in $Params.Keys) { [void]$cmd.Parameters.AddWithValue($k, $Params[$k]) }
     $cmd.ExecuteScalar()
 }
-function Test-Procs {
-    (Invoke-SqlScalar "SELECT CASE WHEN OBJECT_ID('dbo.usp_IPS_MoveTA') IS NOT NULL AND OBJECT_ID('dbo.usp_IPS_RetireTA') IS NOT NULL AND OBJECT_ID('dbo.usp_IPS_CreateTA') IS NOT NULL AND OBJECT_ID('dbo.usp_IPS_RenameTA') IS NOT NULL THEN 1 ELSE 0 END") -eq 1
+$script:ProcNames = @('usp_IPS_MoveTA', 'usp_IPS_RetireTA', 'usp_IPS_CreateTA', 'usp_IPS_RenameTA')
+$script:ProcVerRx  = 'MoveTA-Procs-Version:\s*([0-9][0-9.]*)'
+# Version of the procedures bundled with the app (marker inside usp_IPS_MoveTA.sql)
+function Get-ProcFileVersion {
+    if (-not (Test-Path $script:ProcFile)) { return '' }
+    $m = [regex]::Match([IO.File]::ReadAllText($script:ProcFile), $script:ProcVerRx)
+    if ($m.Success) { $m.Groups[1].Value } else { '' }
+}
+# Compares the procedures in the database with the bundled file.
+# State: ok | missing (some procedure does not exist) | outdated (marker missing or different)
+function Get-ProcState {
+    $want = Get-ProcFileVersion
+    $names = ($script:ProcNames | ForEach-Object { "'$_'" }) -join ','
+    $t = (Invoke-Sql "SELECT p.name, m.definition FROM sys.procedures p JOIN sys.sql_modules m ON m.object_id = p.object_id WHERE p.schema_id = SCHEMA_ID('dbo') AND p.name IN ($names)")[0]
+    $vers = @{}
+    foreach ($r in $t.Rows) {
+        $m = [regex]::Match([string]$r.definition, $script:ProcVerRx)
+        $vers[[string]$r.name] = $(if ($m.Success) { $m.Groups[1].Value } else { '' })
+    }
+    $installed = [string]$vers['usp_IPS_MoveTA']
+    if ($vers.Count -lt $script:ProcNames.Count) { $state = 'missing' }
+    elseif (@($vers.Values | Where-Object { $_ -ne $want }).Count) { $state = 'outdated' }
+    else { $state = 'ok' }
+    [pscustomobject]@{ State = $state; Count = $vers.Count; Installed = $installed; Wanted = $want }
 }
 function Install-Procs {
     if (-not (Test-Path $script:ProcFile)) { throw "usp_IPS_MoveTA.sql not found: $($script:ProcFile)" }
@@ -427,8 +461,27 @@ function Install-Procs {
         if ($b.Trim()) { $cmd = $script:Conn.CreateCommand(); $cmd.CommandText = $b; $cmd.CommandTimeout = 120; [void]$cmd.ExecuteNonQuery() }
     }
 }
+# Removes the tool's procedures from the customer database (soft cleanup: nothing else is touched)
+function Remove-Procs {
+    foreach ($n in $script:ProcNames) {
+        $cmd = $script:Conn.CreateCommand(); $cmd.CommandText = "IF OBJECT_ID('dbo.$n', 'P') IS NOT NULL DROP PROCEDURE dbo.$n"; $cmd.CommandTimeout = 60; [void]$cmd.ExecuteNonQuery()
+    }
+}
+# Makes sure the procedures exist and match the bundled version.
+# Missing: asks before installing (unless -Ask is false). Outdated: updates them without asking.
+# Returns State = ok | installed (was missing) | updated (was outdated), plus Installed/Wanted versions
+function Ensure-Procs([bool]$Ask = $true) {
+    $st = Get-ProcState
+    if ($st.State -eq 'ok') { return $st }
+    if ($st.State -eq 'missing' -and $Ask -and -not $UiTest) {
+        if (-not (Show-Confirm -Title (T 'cf_proc_t') -Sub ((T 'proc_missing') -f $script:Conn.Database) -OkText (T 'cf_install') -Kind 'question')) { throw (T 'proc_notinst') }
+    }
+    Install-Procs
+    $st.State = $(if ($st.State -eq 'outdated') { 'updated' } else { 'installed' })
+    $st
+}
 
-# ============================================================================ dados da planta
+# ============================================================================ plant data
 $script:LinkOrder = @('jobs','WOs','WH','where-list','spares','counters','equip','assemblies','outros')
 function Format-Links([hashtable]$H) {
     $lab = $script:LinkLabelsByLang[$script:Lang]
@@ -494,8 +547,8 @@ function Get-NameOf([string]$Code) {
     ''
 }
 
-# ============================================================================ plano
-# Itens: Type = move   { Src, Target, Rule, NewTop, Pairs, Name, NameOverrides }
+# ============================================================================ plan
+# Items: Type = move   { Src, Target, Rule, NewTop, Pairs, Name, NameOverrides }
 #        Type = create { Code, Father, Name, Kind, Status }
 #        Type = rename { Code, OldName, NewName }
 function Get-Dependency($It) { switch ($It.Type) { 'move' { $It.Target } 'create' { $It.Father } 'rename' { $It.Code } } }
@@ -575,7 +628,7 @@ function Test-DragSource([string]$Code, [string]$IgnoreRename = '') {
     }
     $null
 }
-# ---- recodificar: quem "produz" um código no plano, troca de prefixo nos itens dependentes
+# ---- recode: who "produces" a code in the plan, prefix change in the dependent items
 function Find-PlanOwner([string]$Code) {
     for ($i = 0; $i -lt $script:Plan.Count; $i++) {
         $it = $script:Plan[$i]
@@ -610,6 +663,16 @@ function Rename-PlanPrefix([string]$Old, [string]$New, $Skip) {
             if (Test-InsideCode $it.Code $Old) { $it.Code = $New + $it.Code.Substring($Old.Length) }
         }
     }
+}
+# A free code must not look like a subaccount of another TA: e.g. 99991.731 inside 9999
+# while 99991 exists. Returns that TA code, or $null. $Ignore: codes that are leaving.
+function Find-PrefixClash([string]$Code, [string]$Parent, [hashtable]$Ignore) {
+    $pool = @($script:Base.Keys) + @((Get-PlannedTargets).Keys)
+    foreach ($x in $pool) {
+        if ($Ignore -and $Ignore.ContainsKey($x)) { continue }
+        if ($x.Length -gt $Parent.Length -and $x.Length -lt $Code.Length -and $x.StartsWith($Parent) -and $Code.StartsWith($x)) { return $x }
+    }
+    $null
 }
 function Test-DropTarget([string]$Src, $TgtNode) {
     if (-not $TgtNode) { return (T 'drop_none') }
@@ -1112,7 +1175,9 @@ __STYLES__
                   <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
                     <Button x:Name="BtnConnect" Style="{StaticResource AccentBtn}" Content="{DynamicResource btn_connect}" MinWidth="120"/>
                     <Button x:Name="BtnInstall" Style="{StaticResource Outline}" Content="{DynamicResource btn_install}" Margin="8,0,0,0"/>
+                    <Button x:Name="BtnDropProcs" Style="{StaticResource Outline}" Content="{DynamicResource btn_drop}" Margin="8,0,0,0"/>
                   </StackPanel>
+                  <CheckBox x:Name="ChkDropOnClose" Content="{DynamicResource chk_drop_close}" Margin="0,14,0,0"/>
                   <TextBlock x:Name="TxtConnStatus" Margin="0,12,0,0" TextWrapping="Wrap" Foreground="#616161" FontSize="12"/>
                 </StackPanel>
               </Border>
@@ -1408,7 +1473,7 @@ __STYLES__
       <Border.Effect><DropShadowEffect BlurRadius="26" ShadowDepth="4" Opacity="0.22"/></Border.Effect>
       <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <!-- faixa azul com o ícone -->
+        <!-- blue band with the icon -->
         <Border x:Name="AbHeader" Background="#0F6CBD" CornerRadius="8,8,0,0" Padding="24,22,14,22">
           <DockPanel>
             <Button x:Name="AbX" DockPanel.Dock="Right" Style="{StaticResource Caption}" Width="32" Height="32" VerticalAlignment="Top" Content="&#xE8BB;"/>
@@ -1467,13 +1532,14 @@ function Show-About([switch]$NoShow) {
     $c = @{}; foreach ($n in @('AbRoot','AbHeader','AbX','AbVer','AbEnv','AbCopy','AbClose')) { $c[$n] = $w.FindName($n) }
     $c.AbVer.Text = (T 'ab_ver') -f $script:Version
     $c.AbCopy.Text = "© $((Get-Date).Year) Flávio Miguel"
-    $procs = 0
-    if ($script:Conn) { try { $procs = [int](Invoke-SqlScalar "SELECT COUNT(*) FROM sys.procedures WHERE name IN ('usp_IPS_MoveTA','usp_IPS_RetireTA','usp_IPS_CreateTA','usp_IPS_RenameTA')") } catch {} }
+    $pst = $null
+    if ($script:Conn) { try { $pst = Get-ProcState } catch {} }
+    $procTxt = $(if ($pst) { (T 'ab_procs_v') -f $pst.Count, $(if ($pst.Installed) { $pst.Installed } else { '-' }) } else { '-' })
     $rows = New-Object 'System.Collections.Generic.List[MoveTA.Metric]'
     foreach ($r in @(
         @((T 'ab_conn'), $(if ($script:Conn) { $script:ConnLabel } else { T 'ab_none' }), $(if ($script:Conn) { '#242424' } else { '#8A3707' })),
         @((T 'ab_ips'), $(if ($script:IpsVer) { $script:IpsVer } else { '-' }), '#242424'),
-        @((T 'ab_procs'), $(if ($script:Conn) { (T 'ab_procs_v') -f $procs } else { '-' }), $(if ($procs -eq 4 -or -not $script:Conn) { '#242424' } else { '#B10E1C' })),
+        @((T 'ab_procs'), $procTxt, $(if (-not $pst -or $pst.State -eq 'ok') { '#242424' } else { '#B10E1C' })),
         @((T 'ab_logs'), $script:LogDir, '#242424'),
         @((T 'ab_ps'), "$($PSVersionTable.PSVersion) / .NET $([Environment]::Version)", '#242424'))) {
         $x = New-Object MoveTA.Metric; $x.Label = $r[0]; $x.Value = [string]$r[1]; $x.Fg = $r[2]; $rows.Add($x)
@@ -1492,7 +1558,7 @@ function Set-LangResources($Element) { foreach ($k in $script:Strings[$script:La
 function Set-ColumnHeaders($Grid, [string[]]$Keys) { for ($i = 0; $i -lt $Keys.Count -and $i -lt $Grid.Columns.Count; $i++) { $Grid.Columns[$i].Header = T $Keys[$i] } }
 function New-Window([string]$Xaml) { $w = [Windows.Markup.XamlReader]::Parse($Xaml.Replace('__STYLES__', $script:StylesXaml)); Set-LangResources $w; $w }
 
-# ============================================================================ janela
+# ============================================================================ window
 $win = [Windows.Markup.XamlReader]::Parse($script:MainXaml.Replace('__STYLES__', $script:StylesXaml))
 $script:Win = $win
 $script:U = @{}
@@ -1500,7 +1566,7 @@ foreach ($n in @('Root','TxtVersion','TbSearch','TxtSearchHint','DotConn','TxtCo
                  'PanelMove','PanelHist','PanelConn','CbPlant','BtnSim','BtnExec','BtnNewTA','BtnRename','BtnUndo','BtnClear','BtnReload','TgOptions','PopOptions',
                  'ChkWH','ChkPO','ChkMat','ChkOther','ChkRetire','ChkRetireClass','ChkItems','TxtPlanSummary','InfoBar','InfoIcon','InfoTitle','InfoText','BtnInfoClose',
                  'TreeSrc','TxtSrcCount','TreeDst','TxtDstHint','PlanList','PlanEmpty','TxtPlanCount','BtnSaveLog','TxtActivity','Metrics','GridLog',
-                 'TbServer','TbDb','RbWin','RbSql','TbUser','PbPass','BtnConnect','BtnInstall','TxtConnStatus','GridLogs','BtnOpenLog','BtnOpenFolder','BtnRefreshLogs','TxtHistEmpty')) {
+                 'TbServer','TbDb','RbWin','RbSql','TbUser','PbPass','BtnConnect','BtnInstall','BtnDropProcs','ChkDropOnClose','TxtConnStatus','GridLogs','BtnOpenLog','BtnOpenFolder','BtnRefreshLogs','TxtHistEmpty')) {
     $script:U[$n] = $win.FindName($n)
 }
 $U = $script:U
@@ -1639,7 +1705,7 @@ function Show-NodeInTree($Tree, $Node) {
     if ($item) { $item.BringIntoView(); $Node.IsSelected = $true }
 }
 
-# ============================================================================ arvores
+# ============================================================================ trees
 function Add-Ghost($Idx, $Roots, [string]$Code, [string]$ParentCode, [string]$Name, [string]$Links, [string]$Kind, [string]$Chip) {
     $parent = $Idx[$ParentCode]
     $g = New-Object MoveTA.TaNode; $g.Code = $Code; $g.Name = $Name; $g.Links = $Links; $g.Father = $ParentCode
@@ -1774,7 +1840,7 @@ function Apply-Search([string]$Q) {
     else { Show-Info 'warn' (T 'search_t') ((T 'search_none') -f $Q) }
 }
 
-# ============================================================================ dialogo mover
+# ============================================================================ move dialog
 function New-MoveDialog([string]$Src, [string]$Tgt) {
     $w = New-Window $script:DialogXaml
     $c = @{}
@@ -1786,7 +1852,8 @@ function New-MoveDialog([string]$Src, [string]$Tgt) {
     $sep = [regex]::Match($suf, '^[^0-9A-Za-z]*').Value
     $width = $suf.Length - $sep.Length
     $ctx = [pscustomobject]@{ Window = $w; C = $c; Src = $Src; Tgt = $Tgt; Suffix = $suf; Sep = $sep; Width = $width
-                              PrefixTop = ($Tgt + $suf); NextTop = (Get-NextFree $Tgt $sep $width); NewTop = $null; Rule = $null; Mapping = $null }
+                              PrefixTop = ($Tgt + $suf); NextTop = (Get-NextFree $Tgt $sep $width); NewTop = $null; Rule = $null; Mapping = $null; SubSet = @{} }
+    foreach ($x in (Get-Subtree $Src)) { $ctx.SubSet[$x] = 1 }
     $script:DlgCtx = $ctx
     $c.TxtSrcCode.Text = $Src; $c.TxtSrcName.Text = $script:Base[$Src].Name
     $c.TxtTgtCode.Text = $Tgt; $c.TxtTgtName.Text = Get-NameOf $Tgt
@@ -1800,7 +1867,7 @@ function New-MoveDialog([string]$Src, [string]$Tgt) {
     if ($ctx.NextTop) { $c.TxtNextDesc.Text = ((T 'desc_next') -f $Src, $ctx.NextTop, $Tgt) + (& $ex $ctx.NextTop) }
     else { $c.TxtNextDesc.Text = T 'desc_next_na'; $c.RbNext.IsEnabled = $false }
     $c.TbCustom.Text = $Tgt + $sep
-    $c.TxtCustomDesc.Text = (T 'desc_custom') -f ($Tgt + $sep + ('N' * [Math]::Max($width, 1)))
+    $c.TxtCustomDesc.Text = (T 'desc_custom') -f $Tgt, ($Tgt + $sep + ('N' * [Math]::Max($width, 1)))
     $c.RbPrefix.Add_Checked({ Update-Dialog }); $c.RbNext.Add_Checked({ Update-Dialog })
     $c.RbCustom.Add_Checked({ Update-Dialog; $tb = $script:DlgCtx.C.TbCustom; $tb.Focus() | Out-Null; $tb.CaretIndex = $tb.Text.Length })
     $c.TbCustom.Add_TextChanged({ if ($script:DlgCtx.C.RbCustom.IsChecked) { Update-Dialog } })
@@ -1828,9 +1895,8 @@ function Update-Dialog {
         'custom' {
             $top = $c.TbCustom.Text.Trim()
             if (-not $top) { $err = T 'err_empty' }
-            elseif (-not $top.StartsWith($d.Tgt)) { $err = (T 'err_start') -f $d.Tgt }
-            elseif ($top.Length -ne $d.Tgt.Length + $d.Suffix.Length) { $err = (T 'err_format') -f ($d.Tgt + $d.Sep + ('N' * $d.Width)), $d.Src }
-            elseif ($d.Sep -and -not $top.Substring($d.Tgt.Length).StartsWith($d.Sep)) { $err = (T 'err_sep') -f $d.Tgt, $d.Sep }
+            elseif (-not $top.StartsWith($d.Tgt) -or $top.Length -le $d.Tgt.Length) { $err = (T 'err_start') -f $d.Tgt }
+            else { $x = Find-PrefixClash $top $d.Tgt $d.SubSet; if ($x) { $err = (T 'err_clash') -f $top, $x } }
         }
     }
     if (-not $err -and $top -eq $d.Src) { $err = T 'err_equal' }
@@ -1870,12 +1936,12 @@ function Open-MoveDialog([string]$Src, [string]$Tgt) {
     if ($ctx.Window.ShowDialog() -and $ctx.Mapping) { Add-PlanItem $ctx }
 }
 
-# ============================================================================ dialogo nova TA / renomear
+# ============================================================================ new TA / rename dialog
 function New-EditDialog([string]$Mode, $Node) {
     $w = New-Window $script:EditXaml
     $c = @{}; foreach ($n in @('EdRoot','EdHeader','EdX','EdIconBg','EdIcon','EdTitle','EdSub','EdCtxLabel','EdCtxCode','EdCtxName','EdCode','EdName','EdHint','EdStatus','EdChip','EdChipText','EdStatusText','EdErr','EdCancel','EdOk','EdOkText')) { $c[$n] = $w.FindName($n) }
     $ctx = [pscustomobject]@{ Window = $w; C = $c; Mode = $Mode; Code = $Node.Code; IsGhost = $Node.IsGhost; OldName = $Node.Name; OtherPlants = 0
-                              CodeMode = 'locked'; Parent = $null; FixedLen = 0; Fmt = ''; Owner = $null; Count = 1; LockMsg = '' }
+                              CodeMode = 'locked'; Parent = $null; Owner = $null; Count = 1; LockMsg = ''; Leaving = @{} }
     $script:EdCtx = $ctx
     $c.EdSub.Text = (T 'ed_sub') -f $script:PlantId
     if ($Mode -eq 'create') {
@@ -1890,25 +1956,27 @@ function New-EditDialog([string]$Mode, $Node) {
         $c.EdTitle.Text = T 'ed_ren_t'; $c.EdIconBg.Background = B '#F1E9FA'; $c.EdIcon.Foreground = B '#5C2E91'; $c.EdIcon.Text = [string][char]0xE8AC
         $c.EdCtxLabel.Text = T 'ed_ta'; $c.EdCtxCode.Text = $Node.Code; $c.EdCtxName.Text = $Node.Name
         $c.EdCode.Text = $Node.Code; $c.EdName.Text = $Node.Name
-        # o que define as regras do novo código
+        # what defines the rules for the new code: the father group only (free length, 2.3)
+        $ctx.Leaving[$Node.Code] = 1
         if (-not $Node.IsGhost) {
             $why = Test-DragSource $Node.Code $Node.Code
             if ($why) { $ctx.LockMsg = $why }
             else {
-                $ctx.CodeMode = 'renumber'; $ctx.Parent = $script:Base[$Node.Code].Father; $suf = Get-Suffix $Node.Code
-                $ctx.FixedLen = $ctx.Parent.Length + $suf.Length; $ctx.Fmt = $ctx.Parent + ($suf -replace '[0-9A-Za-z]', 'N'); $ctx.Count = (Get-Subtree $Node.Code).Count
+                $ctx.CodeMode = 'renumber'; $ctx.Parent = $script:Base[$Node.Code].Father; $ctx.Count = (Get-Subtree $Node.Code).Count
+                foreach ($x in (Get-Subtree $Node.Code)) { $ctx.Leaving[$x] = 1 }
             }
         } else {
             $own = Find-PlanOwner $Node.Code; $ctx.Owner = $own
-            if ($own -and $own.Role -eq 'create') { $ctx.CodeMode = 'create'; $ctx.Parent = $own.Item.Father; $ctx.Fmt = $ctx.Parent + '…'; $ctx.Count = Get-GhostCount $Node.Code }
+            if ($own) { foreach ($x in (Get-CreatedCodes $own.Item).Keys) { $ctx.Leaving[$x] = 1 } }
+            if ($own -and $own.Role -eq 'create') { $ctx.CodeMode = 'create'; $ctx.Parent = $own.Item.Father; $ctx.Count = Get-GhostCount $Node.Code }
             elseif ($own -and $own.Role -eq 'movetop') {
-                $ctx.CodeMode = 'movetop'; $ctx.Parent = $own.Item.Target; $suf = Get-Suffix $own.Item.Src
-                $ctx.FixedLen = $ctx.Parent.Length + $suf.Length; $ctx.Fmt = $ctx.Parent + ($suf -replace '[0-9A-Za-z]', 'N'); $ctx.Count = Get-GhostCount $Node.Code
+                $ctx.CodeMode = 'movetop'; $ctx.Parent = $own.Item.Target; $ctx.Count = Get-GhostCount $Node.Code
+                foreach ($p in $own.Item.Pairs) { if ($p.To) { $ctx.Leaving[$p.To] = 1 } }
             }
             elseif ($own) { $ctx.LockMsg = (T 'ed_code_lock_child') -f $own.Item.NewTop }
         }
         $c.EdCode.IsEnabled = ($ctx.CodeMode -ne 'locked')
-        $codeHint = $(if ($ctx.CodeMode -eq 'locked') { $ctx.LockMsg } else { (T 'ed_code_hint_ren') -f $ctx.Fmt })
+        $codeHint = $(if ($ctx.CodeMode -eq 'locked') { $ctx.LockMsg } else { (T 'ed_code_hint_ren') -f $ctx.Parent })
         if ($Node.IsGhost) { $c.EdHint.Text = (T 'ed_ren_ghost') + ' ' + $codeHint }
         else {
             try { $ctx.OtherPlants = [int](Invoke-SqlScalar "SELECT COUNT(DISTINCT Plant_Id) FROM ST_PlantFunction WHERE FuncClass_Id = @fc AND Function_Id = @c AND Rec_Deleted = 0 AND Plant_Id <> @p" @{ '@fc' = $script:FuncClass; '@c' = $Node.Code; '@p' = $script:PlantId }) } catch {}
@@ -1951,12 +2019,13 @@ function Update-Edit {
         elseif ($codeChanged) {
             if ($d.CodeMode -eq 'locked') { $err = $d.LockMsg }
             elseif (-not $code -or -not $code.StartsWith($d.Parent) -or $code.Length -le $d.Parent.Length) { $err = (T 'ed_err_start') -f $d.Parent }
-            elseif ($d.FixedLen -and $code.Length -ne $d.FixedLen) { $err = (T 'ed_err_fmt') -f $d.Fmt }
+            elseif ($d.CodeMode -eq 'renumber' -and $code.StartsWith($d.Code)) { $err = T 'err_inside' }
             elseif ($script:Base.ContainsKey($code)) { $err = (T 'ed_err_exists') -f $code }
             else {
                 $pl = Get-PlannedTargets
                 if ($d.Owner) { foreach ($k in (Get-CreatedCodes $d.Owner.Item).Keys) { $pl.Remove($k) }; if ($d.Owner.Item.Type -eq 'move') { foreach ($p in $d.Owner.Item.Pairs) { if ($p.To) { $pl.Remove($p.To) } } } }
                 if ($pl.ContainsKey($code)) { $err = (T 'ed_err_planned') -f $code }
+                else { $x = Find-PrefixClash $code $d.Parent $d.Leaving; if ($x) { $err = (T 'err_clash') -f $code, $x } }
             }
         }
         if (-not $err) {
@@ -1996,7 +2065,7 @@ function Apply-Edit($Ctx) {
         $nameChanged = ($name -cne $Ctx.OldName)
         switch ($Ctx.CodeMode) {
             'renumber' {
-                # TA já salva: vira um movimento dentro do mesmo pai (renumeração), filhos e ligações vão juntos
+                # saved TA: becomes a move inside the same father (renumber), children and links go along
                 $baseName = $script:Base[$Ctx.Code].Name
                 $old = @($script:Plan | Where-Object { $_.Type -eq 'rename' -and $_.Code -eq $Ctx.Code })
                 foreach ($o in $old) { $script:Plan.Remove($o) }
@@ -2047,7 +2116,7 @@ function Open-EditTA([string]$Mode, $Node) {
     if ($ctx.Window.ShowDialog()) { Apply-Edit $ctx }
 }
 
-# ============================================================================ execucao
+# ============================================================================ execution
 function Get-Options {
     @{ WH = [bool]$script:U.ChkWH.IsChecked; PO = [bool]$script:U.ChkPO.IsChecked; Mat = [bool]$script:U.ChkMat.IsChecked; Other = [bool]$script:U.ChkOther.IsChecked
        Retire = [bool]$script:U.ChkRetire.IsChecked; RetireClass = [bool]$script:U.ChkRetireClass.IsChecked; Items = [bool]$script:U.ChkItems.IsChecked }
@@ -2063,8 +2132,15 @@ function Invoke-Plan([bool]$Commit) {
     $ops = New-Object System.Collections.ArrayList; $movePairs = @(); $renames = @()
     foreach ($it in $script:Plan) {
         switch ($it.Type) {
-            'move'   { foreach ($p in $it.Pairs) { [void]$ops.Add([pscustomobject]@{ Kind = 'move'; From = $p.From; To = $p.To; ToName = $p.ToName }); $movePairs += $p } }
-            'create' { [void]$ops.Add([pscustomobject]@{ Kind = 'create'; From = $it.Father; To = $it.Code; ToName = $it.Name }) }
+            'move'   {
+                # father of each target: the drop group for the top TA, the moved father for the subaccounts
+                $toByFrom = @{}; foreach ($p in $it.Pairs) { $toByFrom[$p.From] = $p.To }
+                foreach ($p in $it.Pairs) {
+                    $fa = $(if ($p.From -eq $it.Src) { $it.Target } else { $toByFrom[$script:Base[$p.From].Father] })
+                    [void]$ops.Add([pscustomobject]@{ Kind = 'move'; From = $p.From; To = $p.To; ToName = $p.ToName; Father = $fa }); $movePairs += $p
+                }
+            }
+            'create' { [void]$ops.Add([pscustomobject]@{ Kind = 'create'; From = $it.Father; To = $it.Code; ToName = $it.Name; Father = $it.Father }) }
             'rename' { $renames += $it }
         }
     }
@@ -2078,8 +2154,8 @@ function Invoke-Plan([bool]$Commit) {
                 $res = Invoke-Sql "EXEC dbo.usp_IPS_CreateTA @Plant_Id, @Code, @Name, @Father, NULL" @{ '@Plant_Id' = $script:PlantId; '@Code' = $o.To; '@Name' = $o.ToName; '@Father' = $o.From } $tran
                 foreach ($r in $res[0].Rows) { $rows.Add((New-LogRow ((T 'log_create') -f $o.To) $r.Tabela $r.Acao $r.Linhas $r.Detalhe)) }
             } else {
-                $res = Invoke-Sql "EXEC dbo.usp_IPS_MoveTA @Plant_Id, @From, @To, @ToName, 1, @WH, @PO, @Mat, @Other, 0, 0, @Items, NULL, 0" @{
-                    '@Plant_Id' = $script:PlantId; '@From' = $o.From; '@To' = $o.To; '@ToName' = $o.ToName; '@WH' = [int]$opt.WH; '@PO' = [int]$opt.PO; '@Mat' = [int]$opt.Mat; '@Other' = [int]$opt.Other; '@Items' = [int]$opt.Items } $tran
+                $res = Invoke-Sql "EXEC dbo.usp_IPS_MoveTA @Plant_Id, @From, @To, @ToName, 1, @WH, @PO, @Mat, @Other, 0, 0, @Items, NULL, 0, @Father" @{
+                    '@Plant_Id' = $script:PlantId; '@From' = $o.From; '@To' = $o.To; '@ToName' = $o.ToName; '@Father' = $o.Father; '@WH' = [int]$opt.WH; '@PO' = [int]$opt.PO; '@Mat' = [int]$opt.Mat; '@Other' = [int]$opt.Other; '@Items' = [int]$opt.Items } $tran
                 foreach ($r in $res[0].Rows) { $rows.Add((New-LogRow "$($o.From) → $($o.To)" $r.Tabela $r.Acao $r.Linhas $r.Detalhe)) }
             }
         }
@@ -2142,6 +2218,7 @@ function Run-Plan([bool]$Commit) {
         $a = New-ExecConfirmArgs
         if (-not (Show-Confirm @a)) { return }
     }
+    try { [void](Ensure-Procs $true) } catch { Show-Info 'error' $(if ($Commit) { T 'fail_exec' } else { T 'fail_sim' }) $_.Exception.Message; return }
     Set-Busy $true
     try { $res = Invoke-Plan $Commit } finally { Set-Busy $false }
     $script:LastRows = $res.Rows; $script:LastPairs = $res.Pairs
@@ -2168,7 +2245,7 @@ function Run-Plan([bool]$Commit) {
     Refresh-Plan
 }
 
-# ============================================================================ conexao / historico
+# ============================================================================ connection / history
 function Set-ConnStatus([string]$Key, [object[]]$ArgList = @()) {
     $script:ConnStatusKey = $Key; $script:ConnStatusArgs = $ArgList
     $script:U.TxtConnStatus.Text = $(if ($Key) { (T $Key) -f $ArgList } else { '' })
@@ -2181,15 +2258,14 @@ function Connect-Db {
         $script:Conn = New-Object System.Data.SqlClient.SqlConnection $cs
         $script:Conn.Open()
         $ver = [string](Invoke-SqlScalar "SELECT System_DBVersion FROM ST_System")
-        if (-not (Test-Procs)) {
-            $ok = $(if ($UiTest) { $true } else { Show-Confirm -Title (T 'cf_proc_t') -Sub ((T 'proc_missing') -f $db) -OkText (T 'cf_install') -Kind 'question' })
-            if (-not $ok) { throw (T 'proc_notinst') }
-            Install-Procs
-        }
+        $pst = Ensure-Procs $true
         $script:ConnLabel = "$db · $srv"; $script:DbName = $db; $script:IpsVer = $ver
         Save-Settings @{ server = $srv; database = $db }
         $script:U.TxtConnChip.Text = "$db · IPS $ver"; $script:U.DotConn.Fill = B '#6CCB5F'
-        Set-ConnStatus 'conn_ok' @($srv, $db, $ver)
+        if ($pst.State -eq 'updated') {
+            $from = $(if ($pst.Installed) { $pst.Installed } else { T 'proc_old' })
+            Set-ConnStatus 'conn_ok_upd' @($srv, $db, $ver, $from, $pst.Wanted)
+        } else { Set-ConnStatus 'conn_ok' @($srv, $db, $ver) }
         $plants = (Invoke-Sql "SELECT Plant_Id, Plant_Name FROM ST_Plant WHERE Rec_Deleted = 0 ORDER BY Plant_Name")[0]
         $script:Loading = $true
         $script:U.CbPlant.Items.Clear(); $sel = -1; $i = 0
@@ -2242,7 +2318,7 @@ function Load-History {
     $script:U.TxtHistEmpty.Visibility = $(if ($list.Count) { 'Collapsed' } else { 'Visible' })
 }
 
-# ============================================================================ menus de contexto
+# ============================================================================ context menus
 function New-MenuItem([string]$Key, [int]$Glyph, [string]$Color, [scriptblock]$OnClick) {
     $mi = New-Object System.Windows.Controls.MenuItem
     $mi.Header = T $Key; $mi.Tag = $Key
@@ -2270,7 +2346,7 @@ function Add-TreeMenu($Tree) {
     $Tree.Add_SelectedItemChanged({ param($s, $e) if ($e.NewValue -is [MoveTA.TaNode]) { $script:SelNode = $e.NewValue } })
 }
 
-# ============================================================================ idioma
+# ============================================================================ language
 function Apply-Language([string]$L) {
     $script:Lang = $L
     Set-LangResources $script:Win
@@ -2292,7 +2368,7 @@ function Apply-Language([string]$L) {
     Save-Lang
 }
 
-# ============================================================================ eventos
+# ============================================================================ events
 $U.BtnMin.Add_Click({ $script:Win.WindowState = 'Minimized' })
 $U.BtnMax.Add_Click({ $script:Win.WindowState = $(if ($script:Win.WindowState -eq 'Maximized') { 'Normal' } else { 'Maximized' }) })
 $U.BtnClose.Add_Click({ $script:Win.Close() })
@@ -2307,7 +2383,13 @@ $win.Add_Closing({ param($s, $e)
         if (-not (Show-Confirm -Title (T 'cf_close_t') -Sub (T 'close_confirm') -OkText (T 'cf_close_btn') -Kind 'warn')) { $e.Cancel = $true }
     }
 })
-$win.Add_Closed({ if ($script:Conn) { try { $script:Conn.Close() } catch {} } })
+$win.Add_Closed({
+    if ($script:Conn) {
+        # optional cleanup: leave no tool procedures behind in the customer database
+        if (-not $UiTest -and $script:U.ChkDropOnClose.IsChecked) { try { Remove-Procs } catch {} }
+        try { $script:Conn.Close() } catch {}
+    }
+})
 $win.Add_PreviewKeyDown({ param($s, $e)
     if ($e.OriginalSource -is [System.Windows.Controls.TextBox]) { return }
     if ($e.Key -eq 'Z' -and [System.Windows.Input.Keyboard]::Modifiers -eq 'Control') { if ($script:Plan.Count) { Remove-PlanItem ($script:Plan.Count - 1) }; $e.Handled = $true }
@@ -2324,6 +2406,14 @@ $U.BtnInstall.Add_Click({
     if (-not $script:Conn) { Set-ConnStatus 'connect_first'; return }
     try { Install-Procs; Set-ConnStatus 'reinstalled' @($script:ConnLabel) } catch { Set-ConnStatus 'conn_fail' @($_.Exception.Message) }
 })
+$U.BtnDropProcs.Add_Click({
+    if (-not $script:Conn) { Set-ConnStatus 'connect_first'; return }
+    if (-not $UiTest -and -not (Show-Confirm -Title (T 'cf_drop_t') -Sub ((T 'drop_confirm') -f $script:ConnLabel) -OkText (T 'cf_drop') -Kind 'warn')) { return }
+    try { Remove-Procs; Set-ConnStatus 'dropped' @($script:ConnLabel) } catch { Set-ConnStatus 'conn_fail' @($_.Exception.Message) }
+})
+$U.ChkDropOnClose.IsChecked = [bool]$script:Saved.dropProcsOnClose
+$U.ChkDropOnClose.Add_Checked({ Save-Settings @{ dropProcsOnClose = $true } })
+$U.ChkDropOnClose.Add_Unchecked({ Save-Settings @{ dropProcsOnClose = $false } })
 $U.CbPlant.Add_SelectionChanged({
     if ($script:Loading) { return }
     if ($script:Plan.Count -gt 0 -and -not $UiTest) {
@@ -2364,7 +2454,7 @@ $U.BtnRefreshLogs.Add_Click({ Load-History })
 Add-TreeMenu $U.TreeSrc
 Add-TreeMenu $U.TreeDst
 
-# ---------------- arrastar e soltar / drag and drop
+# ---------------- drag and drop
 $U.TreeSrc.Add_PreviewMouseLeftButtonDown({ param($s, $e)
     $script:DragStart = $e.GetPosition($script:U.TreeSrc)
     $script:DragNode = Get-NodeFromSource $e.OriginalSource
@@ -2415,21 +2505,21 @@ $U.TreeDst.Add_Drop({ param($s, $e)
     [void]$script:Win.Dispatcher.BeginInvoke([Action]{ $d = $script:PendingDrop; $script:PendingDrop = $null; if ($d) { Open-MoveDialog $d[0] $d[1] } }, [System.Windows.Threading.DispatcherPriority]::Background)
 })
 
-# ============================================================================ inicio
+# ============================================================================ start
 function Show-Offscreen($W) { $W.WindowStartupLocation = 'Manual'; $W.Left = -20000; $W.Top = 0; $W.ShowActivated = $false; $W.Show(); $W.UpdateLayout() }
 function Run-UiTest {
     try {
         $L = $script:Lang
         $ab = Show-About -NoShow; Show-Offscreen $ab.Window; if ($ScreenshotDir) { Save-Visual $ab.Root (Join-Path $ScreenshotDir "MoveTA2_sobre_$L.png") }; $ab.Window.Close()
         Write-Host "[ui] lang=$L conectado: $($script:U.TxtConnChip.Text) planta=$($script:PlantId) TAs=$($script:Base.Count)"
-        # 1) nova TA (ainda nao salva)
+        # 1) new TA (not saved yet)
         $ed = New-EditDialog 'create' $script:DstIndex[$DemoCreateParent]
         $ed.C.EdCode.Text = $DemoCreate; $ed.C.EdName.Text = $DemoCreateName; Update-Edit
         Show-Offscreen $ed.Window
         if ($ScreenshotDir) { Save-Visual $ed.C.EdRoot (Join-Path $ScreenshotDir "MoveTA2_novaTA_$L.png") }
         Write-Host "[ui] nova TA: ok=$($ed.C.EdOk.IsEnabled) status='$($ed.C.EdStatusText.Text)' erro='$($ed.C.EdErr.Text)'"
         $ed.Window.Close(); Apply-Edit $ed
-        # 2) mover para dentro da TA nao salva
+        # 2) move into the unsaved TA
         $why = Test-DropTarget $DemoSrc $script:DstIndex[$DemoTarget]; if ($why) { throw "drop: $why" }
         $ctx = New-MoveDialog $DemoSrc $DemoTarget
         $ctx.C.RbNext.IsChecked = $true; Update-Dialog
@@ -2438,14 +2528,14 @@ function Run-UiTest {
         Write-Host "[ui] mover: $DemoSrc -> $($ctx.NewTop) TAs=$(@($ctx.Mapping).Count) erro='$($ctx.C.TxtErr.Text)'"
         $ctx.Window.Close(); if (-not $ctx.Mapping -or $ctx.C.TxtErr.Text) { throw 'invalid move dialog' }
         Add-PlanItem $ctx
-        # 3) renomear
+        # 3) rename
         $rn = New-EditDialog 'rename' $script:DstIndex[$DemoRename]
         $rn.C.EdName.Text = $DemoRenameTo; Update-Edit
         Show-Offscreen $rn.Window
         if ($ScreenshotDir) { Save-Visual $rn.C.EdRoot (Join-Path $ScreenshotDir "MoveTA2_renomear_$L.png") }
         $rn.Window.Close(); Apply-Edit $rn
         Write-Host "[ui] plano: $($script:U.TxtPlanSummary.Text)"
-        # 4) simular
+        # 4) simulate
         Run-Plan $false
         Write-Host "[ui] simulacao: $($script:U.InfoTitle.Text) | $($script:U.InfoText.Text)"
         Write-Host "[ui] executar habilitado: $($script:U.BtnExec.IsEnabled)"
@@ -2454,12 +2544,12 @@ function Run-UiTest {
         Show-Offscreen $cf.Window
         if ($ScreenshotDir) { Save-Visual $cf.Root (Join-Path $ScreenshotDir "MoveTA2_confirmar_$L.png") }
         $cf.Window.Close()
-        # 5) cascata: remover a nova TA tira o movimento que depende dela
+        # 5) cascade: removing the new TA removes the move that depends on it
         $before = $script:Plan.Count
         Remove-PlanItem 0
         Write-Host "[ui] cascata: plano $before -> $($script:Plan.Count) item(ns) ao remover a nova TA ($($script:U.InfoText.Text))"
         Apply-Edit $ed; $ctx2 = New-MoveDialog $DemoSrc $DemoTarget; $ctx2.C.RbNext.IsChecked = $true; Update-Dialog; $ctx2.Window.Close(); Add-PlanItem $ctx2; Apply-Edit $rn
-        # 6) mudar código: TA criada (7.02 -> 7.03, filho movido segue), topo movido (7.03.01 -> 7.03.05), TA salva (renumerar)
+        # 6) change code: created TA (7.02 -> 7.03, moved child follows), moved top (7.03.01 -> 7.03.05), saved TA (renumber)
         $rc = New-EditDialog 'rename' $script:DstIndex[$DemoCreate]; $newCreate = $DemoCreateParent + '.03'
         $rc.C.EdCode.Text = $newCreate; Update-Edit
         Write-Host "[ui] recode criada: modo=$($rc.CodeMode) ok=$($rc.C.EdOk.IsEnabled) '$($rc.C.EdStatusText.Text)' erro='$($rc.C.EdErr.Text)'"
@@ -2476,6 +2566,11 @@ function Run-UiTest {
         $rb.C.EdCode.Text = '701.12'; Update-Edit
         Write-Host "[ui] renumerar salva: modo=$($rb.CodeMode) ok=$($rb.C.EdOk.IsEnabled) '$($rb.C.EdStatusText.Text)' erro='$($rb.C.EdErr.Text)'"
         $rb.Window.Close(); Apply-Edit $rb
+        # 7) free code (2.3): another level length is accepted without being applied
+        $fc = New-EditDialog 'rename' $script:DstIndex[$newTop]
+        $fc.C.EdCode.Text = $newCreate + '.731'; Update-Edit
+        Write-Host "[ui] codigo livre $($fc.C.EdCode.Text): ok=$($fc.C.EdOk.IsEnabled) erro='$($fc.C.EdErr.Text)'"
+        $fc.Window.Close()
         $lk = New-EditDialog 'rename' $script:DstIndex['701.12.05']
         Write-Host "[ui] filho de estrutura movida: modo=$($lk.CodeMode) codigo habilitado=$($lk.C.EdCode.IsEnabled) dica='$($lk.C.EdHint.Text)'"
         $lk.Window.Close()

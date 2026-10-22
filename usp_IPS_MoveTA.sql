@@ -1,66 +1,91 @@
 /* =============================================================================
-   usp_IPS_MoveTA  -  Realoca uma Technical Account (TA) para outro codigo
-   STAR IPS 3.62.x  (testado em 3.62.14 e 3.62.18)
+   usp_IPS_MoveTA  -  Relocates a Technical Account (TA) to another code
+   STAR IPS 3.62.x  (tested on 3.62.14 and 3.62.18)
+   Author: Flavio Miguel
 
-   Move UMA TA (origem -> destino) dentro de uma planta. Para mover varias
-   (ex.: 801.01, 801.04, 801.10 + subaccounts para 701.xx) chame a proc uma vez
-   por par, pais antes dos filhos, dentro de UMA transacao (o GUI Move-TA.ps1
-   faz isso).
+   CHANGE LOG
+   Date        Version  Change
+   ----------  -------  -------------------------------------------------------
+   2026-10-22  2.3      FIX: free code when moving or renumbering a TA.
+                        usp_IPS_MoveTA has a new optional last parameter
+                        @To_Father. Before, the father of a new target TA was
+                        always derived from the source suffix length (801.01
+                        -> 701.01 needs father 701), so a code with another
+                        level length, e.g. 731 -> 9999.731 inside 9999, was
+                        impossible (the GUI blocked it with "format 9999N").
+                        The GUI now always passes the father explicitly.
+                        Without @To_Father the old rule still applies.
+                        All comments translated to English.
+                        Version marker "MoveTA-Procs-Version" added to every
+                        procedure: the GUI updates outdated procedures by itself
+                        and can drop them from the customer database.
+   (earlier)   1.0-2.2  See the version history in README.md.
 
-   O que faz, na ordem:
-     1. Valida planta, TA origem (ST_Function + ST_PlantFunction + objeto).
-     2. Garante a TA destino:
-          - ST_Function      : reativa se estiver deletada, ou cria (pai = maior
-                               prefixo existente na classe; Function_Length/
-                               Function_OnLower mantidos).
-          - ST_PlantFunction : reativa ou cria copiando TODAS as propriedades da
-                               origem (criticidade, maker, serial, free text...).
-          - ST_Object (tipo 2): via st_CreateObjectId, como o IPS faz.
-          - ST_PLANTFUNCEQ   : copia a especificacao de equipamento, se houver.
-     3. Move as conexoes (soft-delete da linha antiga + insert/reativa da nova,
-        nunca altera PK, nunca apaga fisicamente - seguro para replicacao):
+   Moves ONE TA (source -> target) inside a plant. To move several
+   (e.g. 801.01, 801.04, 801.10 + subaccounts to 701.xx) call the proc once
+   per pair, parents before children, inside ONE transaction (the
+   Move-TA.ps1 GUI does that).
+
+   What it does, in order:
+     1. Validates plant and source TA (ST_Function + ST_PlantFunction + object).
+     2. Ensures the target TA:
+          - ST_Function      : reactivates it if deleted, or creates it (father =
+                               @To_Father, or same depth as the source, or the
+                               longest existing prefix in the class;
+                               Function_Length/Function_OnLower kept).
+          - ST_PlantFunction : reactivates or creates it copying ALL properties
+                               of the source (criticality, maker, serial, free
+                               text...).
+          - ST_Object (type 2): via st_CreateObjectId, as IPS does.
+          - ST_PLANTFUNCEQ   : copies the equipment specification, if any.
+     3. Moves the connections (soft delete of the old row + insert/reactivate
+        of the new one, never changes a PK, never deletes physically - safe
+        for replication):
           - ST_PlantFunctionObject  (jobs 320, spare parts 221, counters 210,
-                                     equipamentos, etc.)
-          - ST_WPWHERE2             (where-list dos work plans, por OBJECT_ID da TA)
-          - ST_WHWHERE2             (where-list do work history)
+                                     equipment, etc.)
+          - ST_WPWHERE2             (work plan where-list, by the TA OBJECT_ID)
+          - ST_WHWHERE2             (work history where-list)
           - ST_WorkHistory          (WH_Function_Id / Name / PLANTFUNC_*)
-          - ST_POAITEM2             (linhas de MR/PO)
-          - ST_MATONHANDSTAT        (TA default do material na planta)
-          - ST_MATTRANS2            (historico de transacoes de material)
-          - ST_BudItem, ST_PlantCost, ST_UserGroupRestrictFunc (update direto)
-     4. Opcional: desativa a TA origem na planta (e na classe, se ninguem usar).
-     5. Devolve um result set com o log (Tabela, Acao, Linhas, Detalhe).
+          - ST_POAITEM2             (MR/PO lines)
+          - ST_MATONHANDSTAT        (default TA of the material in the plant)
+          - ST_MATTRANS2            (material transaction history)
+          - ST_BudItem, ST_PlantCost, ST_UserGroupRestrictFunc (direct update)
+     4. Optional: retires the source TA in the plant (and in the class, if
+        nobody else uses it).
+     5. Returns a result set with the log (Tabela, Acao, Linhas, Detalhe).
+        The log text stays in Portuguese.
 
-   Equivalencia com a planilha "Move TA_3.53_r5.xls":
+   Mapping from the "Move TA_3.53_r5.xls" spreadsheet:
      3.53  ST_WPWHERE  (WP_Object_Id, FuncClass_Id, Function_Id)
      3.62  ST_WPWHERE2 (WP_OBJECT_ID, OBJECT_ID = ST_PlantFunction.PLANTFUNC_OBJECT_ID)
      3.53  ST_WHWHERE  (WH_Object_Id, WHW_FuncClass_Id, WHW_Function_Id)
      3.62  ST_WHWHERE2 (WH_OBJECT_ID, OBJECT_ID = ST_PlantFunction.PLANTFUNC_OBJECT_ID)
-     As tabelas antigas ST_WPWhere/ST_WHWhere continuam existindo mas estao
-     vazias na 3.62; as views VI_WPWHERE/VI_WHWHERE ja leem das *2.
+     The old tables ST_WPWhere/ST_WHWhere still exist but are empty in 3.62;
+     the views VI_WPWHERE/VI_WHWHERE already read from the *2 tables.
 
-   Transacoes: se chamada sem transacao aberta, abre e commita/rollback a sua.
-   Se chamada dentro de uma transacao (GUI), participa dela e, em erro, faz THROW
-   para o chamador dar ROLLBACK. @DryRun=1 executa tudo e desfaz no fim
-   (savepoint quando ha transacao externa).
+   Transactions: when called with no open transaction, it opens its own and
+   commits/rolls back. When called inside a transaction (GUI), it joins it and,
+   on error, THROWs so the caller can ROLLBACK. @DryRun=1 runs everything and
+   undoes it at the end (savepoint when there is an outer transaction).
    ============================================================================= */
 SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 GO
 /* -----------------------------------------------------------------------------
-   usp_IPS_RetireTA - desativa (soft delete) uma TA na planta, se nada ativo
-   restar ligado a ela. Chamada pela usp_IPS_MoveTA e tambem pelo GUI numa
-   segunda passada (filhos primeiro, depois os pais, que so ficam "vazios"
-   depois que todos os subaccounts foram movidos).
-   Nao abre transacao propria: participa da do chamador (ou roda autocommit).
+   usp_IPS_RetireTA - retires (soft delete) a TA in the plant, if nothing
+   active is still linked to it. Called by usp_IPS_MoveTA and also by the GUI
+   in a second pass (children first, then the parents, which only become
+   "empty" after all subaccounts were moved).
+   Does not open its own transaction: joins the caller's (or autocommit).
    ----------------------------------------------------------------------------- */
 CREATE OR ALTER PROCEDURE dbo.usp_IPS_RetireTA
     @Plant_Id        varchar(20),
     @Function_Id     varchar(100),
-    @RetireInClass   bit = 0,              -- desativa tambem em ST_Function se nenhuma planta da classe usar
+    @RetireInClass   bit = 0,              -- also retire in ST_Function if no plant of the class uses it
     @Rec_User        varchar(100) = NULL
 AS
 BEGIN
+    -- MoveTA-Procs-Version: 2.3   (Move-TA.ps1 compares this marker with the bundled file and updates the procedures; bump it on every procedure change)
     SET NOCOUNT ON;
     DECLARE @log TABLE (Seq int IDENTITY(1,1), Tabela sysname, Acao varchar(30), Linhas int, Detalhe varchar(400));
     DECLARE @FC varchar(10), @obj numeric(15,0), @u varchar(100), @left int = 0, @kids int = 0, @Father varchar(100), @msg varchar(400);
@@ -118,19 +143,21 @@ CREATE OR ALTER PROCEDURE dbo.usp_IPS_MoveTA
     @Plant_Id            varchar(20),
     @From_Function_Id    varchar(100),
     @To_Function_Id      varchar(100),
-    @To_Function_Name    varchar(100) = NULL,   -- nome da TA destino se for criada (default: nome da origem)
-    @CreateMissing       bit = 1,               -- cria/reativa ST_Function, ST_PlantFunction e objeto do destino
+    @To_Function_Name    varchar(100) = NULL,   -- target TA name if it is created (default: source name)
+    @CreateMissing       bit = 1,               -- create/reactivate ST_Function, ST_PlantFunction and object of the target
     @MoveWorkHistory     bit = 1,
     @MovePOItems         bit = 1,
-    @MoveMaterialRefs    bit = 1,               -- ST_MATONHANDSTAT (TA default) + ST_MATTRANS2 (historico)
+    @MoveMaterialRefs    bit = 1,               -- ST_MATONHANDSTAT (default TA) + ST_MATTRANS2 (history)
     @MoveOtherRefs       bit = 1,               -- ST_BudItem, ST_PlantCost, ST_UserGroupRestrictFunc
-    @RetireSource        bit = 1,               -- desativa a TA origem na planta se nada restar ligado a ela
-    @RetireSourceInClass bit = 0,               -- desativa tambem em ST_Function se nenhuma planta da classe usar
-    @ListItems           bit = 1,               -- lista no log cada objeto movido via ST_PlantFunctionObject
-    @Rec_User            varchar(100) = NULL,   -- Rec_Creator/Rec_Revisor (default: login atual)
-    @DryRun              bit = 1                -- 1 = simula (desfaz no fim) ; 0 = grava
+    @RetireSource        bit = 1,               -- retire the source TA in the plant if nothing is left linked to it
+    @RetireSourceInClass bit = 0,               -- also retire in ST_Function if no plant of the class uses it
+    @ListItems           bit = 1,               -- list every object moved via ST_PlantFunctionObject in the log
+    @Rec_User            varchar(100) = NULL,   -- Rec_Creator/Rec_Revisor (default: current login)
+    @DryRun              bit = 1,               -- 1 = simulate (undo at the end) ; 0 = save
+    @To_Father           varchar(100) = NULL    -- 2.3: father of the target if it is created (default: same depth as the source)
 AS
 BEGIN
+    -- MoveTA-Procs-Version: 2.3   (Move-TA.ps1 compares this marker with the bundled file and updates the procedures; bump it on every procedure change)
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
@@ -144,12 +171,18 @@ BEGIN
     SET @From_Function_Id = LTRIM(RTRIM(@From_Function_Id));
     SET @To_Function_Id   = LTRIM(RTRIM(@To_Function_Id));
     SET @To_Function_Name = NULLIF(LTRIM(RTRIM(@To_Function_Name)),'');
+    SET @To_Father        = NULLIF(LTRIM(RTRIM(@To_Father)),'');
 
-    /* ---------------- validacoes que nao precisam de transacao ---------------- */
+    /* ---------------- validations that need no transaction ---------------- */
     IF @From_Function_Id IS NULL OR @From_Function_Id = '' OR @To_Function_Id IS NULL OR @To_Function_Id = ''
         THROW 50001, 'Informe @From_Function_Id e @To_Function_Id.', 1;
     IF @From_Function_Id = @To_Function_Id
         THROW 50002, 'Origem e destino sao iguais.', 1;
+    IF @To_Father IS NOT NULL AND (LEN(@To_Function_Id) <= LEN(@To_Father) OR LEFT(@To_Function_Id, LEN(@To_Father)) <> @To_Father)
+    BEGIN
+        SET @msg = 'Destino ' + @To_Function_Id + ' precisa comecar com o pai ' + @To_Father + ' e ser mais longo.';
+        THROW 50008, @msg, 1;
+    END
 
     SELECT @FC = FuncClass_Id FROM ST_Plant WHERE Plant_Id = @Plant_Id AND Rec_Deleted = 0;
     IF @FC IS NULL
@@ -172,7 +205,7 @@ BEGIN
         THROW 50005, @msg, 1;
     END
 
-    /* ---------------- transacao ---------------- */
+    /* ---------------- transaction ---------------- */
     SET @outer = CASE WHEN @@TRANCOUNT > 0 THEN 1 ELSE 0 END;
     IF @outer = 1 SAVE TRANSACTION MoveTA; ELSE BEGIN TRANSACTION;
 
@@ -180,7 +213,7 @@ BEGIN
 
         INSERT @log VALUES ('-', 'inicio', NULL, 'Planta ' + @Plant_Id + ' / classe ' + @FC + ' : ' + @From_Function_Id + ' (' + ISNULL(@FromName,'') + ') -> ' + @To_Function_Id + CASE WHEN @DryRun = 1 THEN '   [SIMULACAO]' ELSE '' END);
 
-        /* ======================= 2. TA destino em ST_Function ======================= */
+        /* ======================= 2. Target TA in ST_Function ======================= */
         IF EXISTS (SELECT 1 FROM ST_Function WHERE FuncClass_Id = @FC AND Function_Id = @To_Function_Id AND Rec_Deleted = 0)
         BEGIN
             SET @DestFuncState = 'existe';
@@ -195,12 +228,16 @@ BEGIN
             END
             IF @To_Function_Name IS NULL SET @To_Function_Name = @FromName;
 
-            -- pai: mesma profundidade da origem. Ex.: 801.01 tem pai 801 (sufixo '.01' = 3 chars)
-            -- => 701.01 precisa do pai 701. Se a origem e raiz, usa o maior prefixo existente.
+            -- father: @To_Father when given (2.3 fix: the GUI always passes it, which allows
+            -- a free code, e.g. 731 -> 9999.731 inside 9999). Otherwise same depth as the
+            -- source: 801.01 has father 801 (suffix '.01' = 3 chars) => 701.01 needs father 701.
+            -- If the source is a root, use the longest existing prefix.
             DECLARE @srcFather varchar(100), @sufLen int;
             SELECT @srcFather = Function_Father FROM ST_Function WHERE FuncClass_Id = @FC AND Function_Id = @From_Function_Id;
             SET @sufLen = CASE WHEN @srcFather IS NULL THEN NULL ELSE LEN(@From_Function_Id) - LEN(@srcFather) END;
-            IF @sufLen IS NOT NULL AND @sufLen > 0 AND LEN(@To_Function_Id) > @sufLen
+            IF @To_Father IS NOT NULL
+                SET @Father = @To_Father;
+            ELSE IF @sufLen IS NOT NULL AND @sufLen > 0 AND LEN(@To_Function_Id) > @sufLen
                 SET @Father = LEFT(@To_Function_Id, LEN(@To_Function_Id) - @sufLen);
             ELSE
                 SELECT TOP 1 @Father = Function_Id FROM ST_Function
@@ -213,7 +250,7 @@ BEGIN
                 THROW 50007, @msg, 1;
             END
 
-            IF EXISTS (SELECT 1 FROM ST_Function WHERE FuncClass_Id = @FC AND Function_Id = @To_Function_Id)   -- existe deletada
+            IF EXISTS (SELECT 1 FROM ST_Function WHERE FuncClass_Id = @FC AND Function_Id = @To_Function_Id)   -- exists, deleted
             BEGIN
                 UPDATE ST_Function
                    SET Rec_Deleted = 0, Function_Name = @To_Function_Name, Function_Father = @Father,
@@ -228,13 +265,13 @@ BEGIN
                   FROM ST_Function WHERE FuncClass_Id = @FC AND Function_Id = @From_Function_Id;
                 SET @DestFuncState = 'criada';
             END
-            -- recontagem de filhos do pai
+            -- recount the father's children
             UPDATE f SET Function_OnLower = (SELECT COUNT(*) FROM ST_Function c WHERE c.FuncClass_Id = f.FuncClass_Id AND c.Function_Father = f.Function_Id AND c.Rec_Deleted = 0), Rec_Revisor = @u
               FROM ST_Function f WHERE f.FuncClass_Id = @FC AND f.Function_Id = @Father;
         END
         INSERT @log VALUES ('ST_Function', @DestFuncState, 1, @To_Function_Id + ' (' + ISNULL(@To_Function_Name,'') + ')' + CASE WHEN @Father IS NOT NULL THEN '  pai=' + @Father ELSE '' END);
 
-        /* ======================= 2b. TA destino em ST_PlantFunction + ST_Object ======================= */
+        /* ======================= 2b. Target TA in ST_PlantFunction + ST_Object ======================= */
         SELECT @D_obj = PLANTFUNC_OBJECT_ID FROM ST_PlantFunction WHERE Plant_Id = @Plant_Id AND FuncClass_Id = @FC AND Function_Id = @To_Function_Id AND Rec_Deleted = 0;
         IF @D_obj IS NOT NULL
         BEGIN
@@ -247,7 +284,7 @@ BEGIN
                 SET @msg = 'TA destino ' + @To_Function_Id + ' nao esta ativa na planta ' + @Plant_Id + ' e @CreateMissing = 0.';
                 THROW 50008, @msg, 1;
             END
-            IF EXISTS (SELECT 1 FROM ST_PlantFunction WHERE Plant_Id = @Plant_Id AND FuncClass_Id = @FC AND Function_Id = @To_Function_Id)  -- existe deletada
+            IF EXISTS (SELECT 1 FROM ST_PlantFunction WHERE Plant_Id = @Plant_Id AND FuncClass_Id = @FC AND Function_Id = @To_Function_Id)  -- exists, deleted
             BEGIN
                 SELECT @D_obj = PLANTFUNC_OBJECT_ID FROM ST_PlantFunction WHERE Plant_Id = @Plant_Id AND FuncClass_Id = @FC AND Function_Id = @To_Function_Id;
                 IF @D_obj IS NULL
@@ -262,7 +299,7 @@ BEGIN
             END
             ELSE
             BEGIN
-                -- objeto da TA (ObjType 2), como o IPS/trigger TI_ST_PLANTFUNCTION fazem
+                -- TA object (ObjType 2), as IPS and trigger TI_ST_PLANTFUNCTION do
                 EXEC dbo.st_CreateObjectId @D_obj OUTPUT, @Plant_Id, 2, @To_Function_Id, @To_Function_Name, 0, 0, @u;
                 IF ISNULL(@D_obj, 0) = 0 THROW 50009, 'st_CreateObjectId nao devolveu Object_Id para a TA destino.', 1;
 
@@ -286,7 +323,7 @@ BEGIN
                   FROM ST_PlantFunction
                  WHERE Plant_Id = @Plant_Id AND FuncClass_Id = @FC AND Function_Id = @From_Function_Id;
 
-                -- especificacao de equipamento (ST_PLANTFUNCEQ): copia dinamica de todas as colunas PFEQ_*
+                -- equipment specification (ST_PLANTFUNCEQ): dynamic copy of all PFEQ_* columns
                 IF EXISTS (SELECT 1 FROM ST_PLANTFUNCEQ WHERE PLANT_ID = @Plant_Id AND FUNCCLASS_ID = @FC AND FUNCTION_ID = @From_Function_Id AND REC_DELETED = 0)
                    AND NOT EXISTS (SELECT 1 FROM ST_PLANTFUNCEQ WHERE PLANT_ID = @Plant_Id AND FUNCCLASS_ID = @FC AND FUNCTION_ID = @To_Function_Id)
                 BEGIN
@@ -313,7 +350,7 @@ BEGIN
              WHERE pfo.Plant_Id = @Plant_Id AND pfo.FuncClass_Id = @FC AND pfo.Function_Id = @From_Function_Id AND pfo.Rec_Deleted = 0
              ORDER BY pfo.ObjType_Id, o.Obj_Code;
 
-        -- reativa/atualiza linhas que ja existem no destino (mesmo objeto)
+        -- reactivate/update rows that already exist on the target (same object)
         UPDATE d SET Rec_Deleted = 0, ObjType_Id = s.ObjType_Id, PFO_String = s.PFO_String, PFO_Double = s.PFO_Double, PFO_Date = s.PFO_Date, PFO_QUALIFYER = s.PFO_QUALIFYER, Rec_Revisor = @u
           FROM ST_PlantFunctionObject d
           JOIN ST_PlantFunctionObject s ON s.Plant_Id = d.Plant_Id AND s.FuncClass_Id = d.FuncClass_Id AND s.Object_Id = d.Object_Id
@@ -332,7 +369,7 @@ BEGIN
          WHERE Plant_Id = @Plant_Id AND FuncClass_Id = @FC AND Function_Id = @From_Function_Id AND Rec_Deleted = 0;
         INSERT @log VALUES ('ST_PlantFunctionObject', 'movidas', @@ROWCOUNT, CAST(@n2 AS varchar(10)) + ' inseridas no destino, ' + CAST(@n AS varchar(10)) + ' ja existiam (merge)');
 
-        /* ======================= 3b. ST_WPWHERE2 (where-list dos work plans) ======================= */
+        /* ======================= 3b. ST_WPWHERE2 (work plan where-list) ======================= */
         UPDATE d SET REC_DELETED = 0,
                      WPWHERE_MAIN = CASE WHEN ISNULL(s.WPWHERE_MAIN,0) = -1 OR ISNULL(d.WPWHERE_MAIN,0) = -1 THEN -1 ELSE d.WPWHERE_MAIN END,
                      WPWHERE_OK = ISNULL(s.WPWHERE_OK, d.WPWHERE_OK), WPWHERE_COMMENTS = ISNULL(s.WPWHERE_COMMENTS, d.WPWHERE_COMMENTS),
@@ -354,7 +391,7 @@ BEGIN
         UPDATE ST_WPWHERE2 SET REC_DELETED = -1, REC_REVISOR = @u WHERE OBJECT_ID = @S_obj AND REC_DELETED = 0;
         INSERT @log VALUES ('ST_WPWHERE2', 'movidas', @@ROWCOUNT, CAST(@n2 AS varchar(10)) + ' inseridas, ' + CAST(@n AS varchar(10)) + ' merge (jobs/WOs/atividades que tinham a TA na where-list)');
 
-        -- tabela legada (so se ainda tiver linhas; na 3.62 costuma estar vazia)
+        -- legacy table (only if it still has rows; in 3.62 it is usually empty)
         IF EXISTS (SELECT 1 FROM ST_WPWhere WHERE FuncClass_Id = @FC AND Function_Id = @From_Function_Id AND Rec_Deleted = 0)
         BEGIN
             UPDATE d SET Rec_Deleted = 0, WPWhere_Main = s.WPWhere_Main, WPWhere_Ok = s.WPWhere_Ok, WPWhere_Comments = s.WPWhere_Comments, WPWhere_Ev_Object_Id = s.WPWhere_Ev_Object_Id, Rec_Revisor = @u
@@ -437,7 +474,7 @@ BEGIN
         ELSE
             INSERT @log VALUES ('ST_WHWHERE2 / ST_WorkHistory', 'pulado', 0, '@MoveWorkHistory = 0');
 
-        /* ======================= 3d. ST_POAITEM2 (linhas de MR/PO) ======================= */
+        /* ======================= 3d. ST_POAITEM2 (MR/PO lines) ======================= */
         IF @MovePOItems = 1
         BEGIN
             UPDATE p SET FUNCTION_ID = @To_Function_Id, REC_REVISOR = @u
@@ -447,7 +484,7 @@ BEGIN
         END
         ELSE INSERT @log VALUES ('ST_POAITEM2', 'pulado', 0, '@MovePOItems = 0');
 
-        /* ======================= 3e. Materiais ======================= */
+        /* ======================= 3e. Materials ======================= */
         IF @MoveMaterialRefs = 1
         BEGIN
             UPDATE ST_MATONHANDSTAT SET MatOH_Def_Function_Id = @To_Function_Id, REC_REVISOR = @u
@@ -461,7 +498,7 @@ BEGIN
         END
         ELSE INSERT @log VALUES ('ST_MATONHANDSTAT / ST_MATTRANS2', 'pulado', 0, '@MoveMaterialRefs = 0');
 
-        /* ======================= 3f. Outras referencias ======================= */
+        /* ======================= 3f. Other references ======================= */
         IF @MoveOtherRefs = 1
         BEGIN
             UPDATE b SET Function_Id = @To_Function_Id, Rec_Revisor = @u
@@ -484,7 +521,7 @@ BEGIN
             INSERT @log VALUES ('ST_UserGroupRestrictFunc', 'atualizadas', @@ROWCOUNT, 'restricoes de grupo de usuario por TA');
         END
 
-        /* ======================= 3g. Referencias que ficam so no relatorio ======================= */
+        /* ======================= 3g. References that are only reported ======================= */
         INSERT @log (Tabela, Acao, Linhas, Detalhe)
         SELECT x.Tabela, 'VERIFICAR', x.n, 'referencias a ' + @From_Function_Id + ' nesta tabela nao sao movidas pela tool (sem contexto de planta seguro) - revisar manualmente'
           FROM (
@@ -500,7 +537,7 @@ BEGIN
                ) x
          WHERE x.n > 0;
 
-        /* ======================= 4. Desativar TA origem (usp_IPS_RetireTA) ======================= */
+        /* ======================= 4. Retire the source TA (usp_IPS_RetireTA) ======================= */
         IF @RetireSource = 1
         BEGIN
             DECLARE @ret TABLE (Tabela sysname, Acao varchar(30), Linhas int, Detalhe varchar(400));
@@ -527,10 +564,11 @@ END
 GO
 
 /* -----------------------------------------------------------------------------
-   usp_IPS_CreateTA - cria (ou reativa) uma TA na planta, dentro de @Father.
-   ST_Function (classe) + ST_Object tipo 2 (st_CreateObjectId) + ST_PlantFunction.
-   Se o codigo ja existe ativo na classe, so ativa na planta (mantem o nome da classe).
-   Participa da transacao do chamador; sem transacao aberta, usa a sua.
+   usp_IPS_CreateTA - creates (or reactivates) a TA in the plant, inside @Father.
+   ST_Function (class) + ST_Object type 2 (st_CreateObjectId) + ST_PlantFunction.
+   If the code already exists active in the class, it is only activated in the
+   plant (the class name is kept).
+   Joins the caller's transaction; with no open transaction, uses its own.
    ----------------------------------------------------------------------------- */
 CREATE OR ALTER PROCEDURE dbo.usp_IPS_CreateTA
     @Plant_Id       varchar(20),
@@ -540,6 +578,7 @@ CREATE OR ALTER PROCEDURE dbo.usp_IPS_CreateTA
     @Rec_User       varchar(100) = NULL
 AS
 BEGIN
+    -- MoveTA-Procs-Version: 2.3   (Move-TA.ps1 compares this marker with the bundled file and updates the procedures; bump it on every procedure change)
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
     DECLARE @log TABLE (Seq int IDENTITY(1,1), Tabela sysname, Acao varchar(30), Linhas int, Detalhe varchar(400));
@@ -608,9 +647,9 @@ END
 GO
 
 /* -----------------------------------------------------------------------------
-   usp_IPS_RenameTA - renomeia uma TA. O nome mora em ST_Function (vale para a classe
-   inteira) e na descricao do objeto da TA (ST_Object) de cada planta da classe.
-   Historico ja arquivado (ST_WorkHistory.WH_Function_Name) mantem o nome antigo.
+   usp_IPS_RenameTA - renames a TA. The name lives in ST_Function (valid for the
+   whole class) and in the TA object description (ST_Object) of every plant of
+   the class. Archived history (ST_WorkHistory.WH_Function_Name) keeps the old name.
    ----------------------------------------------------------------------------- */
 CREATE OR ALTER PROCEDURE dbo.usp_IPS_RenameTA
     @Plant_Id     varchar(20),
@@ -619,6 +658,7 @@ CREATE OR ALTER PROCEDURE dbo.usp_IPS_RenameTA
     @Rec_User     varchar(100) = NULL
 AS
 BEGIN
+    -- MoveTA-Procs-Version: 2.3   (Move-TA.ps1 compares this marker with the bundled file and updates the procedures; bump it on every procedure change)
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
     DECLARE @log TABLE (Seq int IDENTITY(1,1), Tabela sysname, Acao varchar(30), Linhas int, Detalhe varchar(400));

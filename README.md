@@ -12,7 +12,17 @@
 * Parâmetros passam direto para o app, por exemplo `MoveTA.exe -Lang en -Server SRV\SQL -Database IPS`.
 * Para gerar de novo depois de mudar o app: `powershell -NoProfile -ExecutionPolicy Bypass -STA -File build\Build-Exe.ps1`.
 
-## Versão 2.2 (atual)
+## Versão 2.3 (atual)
+
+* **Código livre ao mover ou mudar código:** o código novo só precisa começar com o grupo pai e ser mais longo. Não precisa mais ter o mesmo tamanho de nível da origem. Exemplo: 731 solto em 9999 pode virar 9999.731, e os filhos seguem (731.100 → 9999.731.100). Antes o diálogo exigia o formato 9999N.
+* A tool recusa um código que pareça subaccount de outra TA, por exemplo 99991.731 dentro de 9999 quando 99991 existe.
+* **Procedures atualizadas sozinhas:** cada procedure leva a marca `MoveTA-Procs-Version`. Ao conectar e antes de simular ou executar, a tool compara a marca do banco com a do `usp_IPS_MoveTA.sql` embutido. Se faltar alguma procedure, ela pergunta antes de instalar. Se estiverem desatualizadas, ela atualiza e avisa na tela de conexão.
+* **Remover as procedures do banco do cliente:** botão **Remover procedures** na tela de conexão, ou a opção **Remover as procedures do banco ao fechar a tool**, que fica salva em `settings.json`. Nenhum dado do IPS é alterado. Se a tool for usada de novo, as procedures voltam a ser instaladas.
+* `usp_IPS_MoveTA` ganhou o parâmetro opcional `@To_Father`, o último da lista. A tool sempre informa o pai. Sem ele, vale a regra antiga de mesma profundidade da origem.
+* Comentários do código do app, do launcher e das procedures passaram para inglês. O cabeçalho de `usp_IPS_MoveTA.sql` tem o histórico de correções com data.
+* Em ambiente com mais de um usuário da tool no mesmo banco, não use a remoção ao fechar: ela apaga as procedures que outra pessoa pode estar usando.
+
+## Versão 2.2
 
 * **Renomear ou mudar código:** o mesmo diálogo agora muda o código também, e os filhos seguem. Em TA criada no plano, os itens dentro dela são reescritos. No topo de uma estrutura movida, muda o destino. Em TA já salva, vira renumeração dentro do mesmo pai. Filhos de estrutura movida têm o código travado: edite o topo.
 * **Sobre:** botão no trilho com versão, autoria (Flávio Miguel) e ambiente (conexão, versão do IPS, procedures, pasta de logs).
@@ -90,7 +100,7 @@ Ordem interna: pares em ordem de tamanho do código (pais antes dos filhos, para
 | — | `ST_MATONHANDSTAT.MatOH_Def_Function_Id`, `ST_MATTRANS2.MATTR_FUNCTION_ID` | TA default do material e histórico de transações (opcional). |
 | — | `ST_BudItem`, `ST_PlantCost`, `ST_UserGroupRestrictFunc` | update direto; item de orçamento que já exista no destino é reportado como `ATENCAO` e não é movido. |
 | `CopyTA` (propriedades) | automático ao criar o destino | todas as colunas de `ST_PlantFunction` e `ST_PLANTFUNCEQ`. |
-| — | `ST_Function` | cria/reativa o destino; pai = mesma profundidade da origem (801.01 → pai 801, logo 701.01 exige 701 existente); `Function_Length`/`Function_OnLower` recalculados. Erro claro se o grupo pai não existir. |
+| — | `ST_Function` | cria/reativa o destino; pai = `@To_Father` quando informado (a tool sempre informa), senão mesma profundidade da origem (801.01 → pai 801, logo 701.01 exige 701 existente); `Function_Length`/`Function_OnLower` recalculados. Erro claro se o grupo pai não existir. |
 | — | desativar origem | `ST_PlantFunction`, `ST_PLANTFUNCEQ`, `ST_Object` (Rec_Deleted = -1) só se nada ativo restar; na classe (`ST_Function`) só se nenhuma outra planta usar e não houver subaccounts ativos. |
 
 Tabelas que apenas **aparecem no log como `VERIFICAR`** (referência por `Function_Id` sem contexto seguro de planta): `ST_NonConformity`, `ST_GuaranteeClaim`, `ST_INVAHead`, `ST_EventConsequence`, `ST_EventLessonLearned`, `ST_WorkPlanProject`, `ST_WorkHistoryProject`, `ST_ASSEMBLYNODE`, `ST_SELECTGROUP`.
@@ -120,4 +130,7 @@ EXEC dbo.usp_IPS_RetireTA 'FMHUB','801.04.01',1;
 EXEC dbo.usp_IPS_RetireTA 'FMHUB','801.04',1;
 -- revise os result sets; depois:
 COMMIT;   -- ou ROLLBACK
+
+-- código livre (2.3): pai informado no último parâmetro, @To_Father
+EXEC dbo.usp_IPS_MoveTA @Plant_Id='FMHUB', @From_Function_Id='731', @To_Function_Id='9999.731', @DryRun=1, @To_Father='9999';
 ```

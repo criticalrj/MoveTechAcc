@@ -1,3 +1,3 @@
 @echo off
-rem Abre a tool Move TA (GUI). Requer PowerShell 5.1 (Windows) e acesso ao SQL Server do IPS.
+rem Opens the Move TA tool (GUI). Requires PowerShell 5.1 (Windows) and access to the IPS SQL Server.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0Move-TA.ps1" %*
