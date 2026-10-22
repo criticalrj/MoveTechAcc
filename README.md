@@ -10,7 +10,7 @@
 * Requisitos: Windows 10/11 com PowerShell 5.1 e .NET Framework 4.x (padrão do Windows). Não instala nada.
 * Se não abrir: rode `MoveTA.exe /debug` para ver o erro. A causa mais comum é política (GPO) que bloqueia scripts PowerShell.
 * Parâmetros passam direto para o app, por exemplo `MoveTA.exe -Lang en -Server SRV\SQL -Database IPS`.
-* Para gerar de novo depois de mudar o app: `powershell -NoProfile -ExecutionPolicy Bypass -STA -File build\Build-Exe.ps1`.
+* Para gerar de novo depois de mudar o app: `powershell -NoProfile -ExecutionPolicy Bypass -STA -File build\Build-Exe.ps1`. No Linux, com o Mono: `build/build-exe-linux.sh`.
 
 ## Versão 2.3 (atual)
 
