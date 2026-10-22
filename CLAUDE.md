@@ -31,6 +31,8 @@ Ferramenta para **realocar, criar e renomear Technical Accounts (TA)** no STAR I
 - Ao mudar qualquer procedure, subir a marca `-- MoveTA-Procs-Version: X.Y` dentro de **cada uma das 4 procs**. O app compara essa marca com o arquivo embutido e atualiza as procs sozinho (ao conectar e antes de simular/executar).
 - O app pode remover as procs do banco do cliente: botão na tela de conexão ou opção "ao fechar" (`dropProcsOnClose` no settings.json).
 
+- **Sempre entregar o app para download** ao fim de cada mudança: zip `MoveTA_<versão>.zip` com `Move-TA.ps1`, `usp_IPS_MoveTA.sql`, `Move-TA.cmd` e `README.md` numa pasta `MoveTA_<versão>/`, enviado ao usuário como anexo. O `MoveTA.exe` só sai do build no Windows.
+
 ## Armadilhas (importante)
 - `Move-TA.ps1` precisa ser salvo em **UTF-8 com BOM** (PowerShell 5.1).
 - `usp_IPS_MoveTA.sql` deve ser **só ASCII** (sem acentos): sqlcmd e o app leem sem BOM.
