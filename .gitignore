@@ -1,0 +1,10 @@
+﻿# Logs de simulação/execução (dados do banco)
+logs/
+# Duplicado da pasta versions/v1.0
+versions/MoveTA_v1.0.zip
+# Gerados pelo build (recriados por build/Build-Exe.ps1)
+build/MoveTA.ico
+build/MoveTA_256.png
+# Windows
+Thumbs.db
+desktop.ini
